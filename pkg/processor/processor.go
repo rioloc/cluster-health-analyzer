@@ -35,7 +35,7 @@ type processor struct {
 	// interval is the time interval between processing iterations.
 	interval time.Duration
 
-	loader           *prom.Loader
+	loader           prom.Loader
 	amLoader         alertmanager.AlertLoader
 	groupsCollection *GroupsCollection
 }
@@ -166,38 +166,25 @@ func (p *processor) assignAlertsToGroups(alerts []model.LabelSet, t time.Time) [
 
 // Process performs a single iteration of the processor.
 func (p *processor) Process(ctx context.Context) error {
-	err := p.updateHealthMap(ctx)
+	healthMap, err := p.getHealthMap(ctx)
 	if err != nil {
 		return err
 	}
 
+	// update exposed prometheus metrics
+	p.updateHealthMapMetrics(healthMap)
+	p.updateGroupSeverityCountMetrics(healthMap)
 	p.updateComponentsMetrics()
-
 	return nil
 }
 
-func (p *processor) updateHealthMap(ctx context.Context) error {
+func (p *processor) getHealthMap(ctx context.Context) ([]ComponentHealthMap, error) {
 	alerts, err := p.loadAlerts(ctx, time.Now())
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	healthMap := MapAlerts(alerts)
-	healthMap = dedupHealthMaps(healthMap)
-
-	healthMapMetrics := make([]prom.Metric, 0, len(healthMap))
-	for _, healthMap := range healthMap {
-		healthMapMetrics = append(healthMapMetrics, prom.Metric{
-			Labels: healthMap.Labels(),
-			Value:  float64(healthMap.Health),
-		})
-	}
-	p.healthMapMetrics.Update(healthMapMetrics)
-
-	severityCountsMetrics := p.computeSeverityCountMetrics(healthMap)
-	p.groupSeverityCountMetrics.Update(severityCountsMetrics)
-
-	return nil
+	return dedupHealthMaps(healthMap), nil
 }
 
 func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
@@ -305,6 +292,22 @@ func (p *processor) updateComponentsMetrics() {
 		})
 	}
 	p.componentsMetrics.Update(metrics)
+}
+
+func (p *processor) updateHealthMapMetrics(healthMap []ComponentHealthMap) {
+	healthMapMetrics := make([]prom.Metric, 0, len(healthMap))
+	for _, healthMap := range healthMap {
+		healthMapMetrics = append(healthMapMetrics, prom.Metric{
+			Labels: healthMap.Labels(),
+			Value:  float64(healthMap.Health),
+		})
+	}
+	p.healthMapMetrics.Update(healthMapMetrics)
+}
+
+func (p *processor) updateGroupSeverityCountMetrics(healthMap []ComponentHealthMap) {
+	severityCountsMetrics := p.computeSeverityCountMetrics(healthMap)
+	p.groupSeverityCountMetrics.Update(severityCountsMetrics)
 }
 
 type ComponentRank struct {
