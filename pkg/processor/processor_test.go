@@ -360,6 +360,56 @@ func Test_evaluateSilences(t *testing.T) {
 			wantErr: nil,
 		},
 		{
+			name: "OU-1020",
+			args: args{
+				alerts: []model.LabelSet{
+					{
+						"alertname": "SyntheticSharedFiring003",
+						"namespace": "openshift-storage",
+						"severity":  "critical",
+						"component": "storage",
+					},
+					{
+						"alertname": "SyntheticSharedFiring003",
+						"namespace": "openshift-network",
+						"severity":  "critical",
+						"component": "network",
+					},
+				},
+			},
+			amLoader: func() alertmanager.Loader {
+				silenced := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "SyntheticSharedFiring003",
+							"namespace": "openshift-storage",
+							"severity":  "critical",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silenced, nil)
+				return mocked
+			}(),
+			expected: []model.LabelSet{
+				{
+					"alertname": "SyntheticSharedFiring003",
+					"namespace": "openshift-storage",
+					"severity":  "critical",
+					"component": "storage",
+					"silenced":  "true",
+				},
+				{
+					"alertname": "SyntheticSharedFiring003",
+					"namespace": "openshift-network",
+					"severity":  "critical",
+					"component": "network",
+					"silenced":  "false",
+				},
+			},
+			wantErr: nil,
+		},
+		{
 			name: "unhappy path, alertmanager error",
 			args: args{
 				alerts: []model.LabelSet{
