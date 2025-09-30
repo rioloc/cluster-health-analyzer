@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/golang/mock/gomock"
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
 	"github.com/prometheus/alertmanager/api/v2/models"
@@ -209,55 +211,206 @@ func Test_computeSeverityCountMetrics_UnrecognizedHealthValue(t *testing.T) {
 }
 
 func Test_evaluateSilences(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	type args struct {
 		alerts []model.LabelSet
 	}
 
 	tests := []struct {
-		name            string
-		args            args
-		silenced        []models.Alert
-		alertManagerErr error
-		expected        []model.LabelSet
-		wantErr         error
+		name     string
+		args     args
+		amLoader alertmanager.Loader
+		expected []model.LabelSet
+		wantErr  error
 	}{
 		{
-			name: "happy path",
+			name: "all alerts within same groupID with the same triple (alertname, namespace, severity) are silenced",
 			args: args{
 				alerts: []model.LabelSet{
 					{
-						"alertname": "KubeNodeNotReady",
+						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "foo",
+						"group_id":  "group_1",
 					},
 					{
 						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-etcd",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "bar",
+						"group_id":  "group_1",
+					},
+					{
+						"alertname": "UpdateAvailable",
+						"namespace": "openshift-monitoring",
+						"severity":  "info",
+						"group_id":  "group_1",
 					},
 				},
 			},
-			silenced: []models.Alert{
-				{
-					Labels: map[string]string{
-						"alertname": "KubePodCrashLooping",
+			amLoader: func() alertmanager.Loader {
+				silenced := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "KubePodCrashLooping",
+							"namespace": "openshift-monitoring",
+							"severity":  "warning",
+							"pod":       "foo",
+							"group_id":  "group_1",
+						},
 					},
-				},
-			},
+					{
+						Labels: map[string]string{
+							"alertname": "KubePodCrashLooping",
+							"namespace": "openshift-monitoring",
+							"severity":  "warning",
+							"pod":       "bar",
+							"group_id":  "group_1",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silenced, nil)
+				return mocked
+			}(),
 			expected: []model.LabelSet{
 				{
-					"alertname": "KubeNodeNotReady",
+					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-monitoring",
-					"silenced":  "0",
+					"severity":  "warning",
+					"group_id":  "group_1",
+					"pod":       "foo",
+					"silenced":  "true",
 				},
 				{
 					"alertname": "KubePodCrashLooping",
-					"namespace": "openshift-etcd",
-					"silenced":  "1",
+					"namespace": "openshift-monitoring",
+					"group_id":  "group_1",
+					"severity":  "warning",
+					"pod":       "bar",
+					"silenced":  "true",
+				},
+				{
+					"alertname": "UpdateAvailable",
+					"namespace": "openshift-monitoring",
+					"severity":  "info",
+					"group_id":  "group_1",
+					"silenced":  "false",
 				},
 			},
 			wantErr: nil,
 		},
 		{
-			name: "unhappy path - alert manager client gets an error",
+			name: "not all alerts in the group are silenced",
+			args: args{
+				alerts: []model.LabelSet{
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "foo",
+						"group_id":  "group_1",
+					},
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "bar",
+						"group_id":  "group_1",
+					},
+				},
+			},
+			amLoader: func() alertmanager.Loader {
+				silenced := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "KubePodCrashLooping",
+							"namespace": "openshift-monitoring",
+							"severity":  "warning",
+							"group_id":  "group_1",
+							"pod":       "foo",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silenced, nil)
+				return mocked
+			}(),
+			expected: []model.LabelSet{
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-monitoring",
+					"severity":  "warning",
+					"pod":       "foo",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-monitoring",
+					"severity":  "warning",
+					"pod":       "bar",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "OU-1020",
+			args: args{
+				alerts: []model.LabelSet{
+					{
+						"alertname": "SyntheticSharedFiring003",
+						"namespace": "openshift-storage",
+						"severity":  "critical",
+						"component": "storage",
+					},
+					{
+						"alertname": "SyntheticSharedFiring003",
+						"namespace": "openshift-network",
+						"severity":  "critical",
+						"component": "network",
+					},
+				},
+			},
+			amLoader: func() alertmanager.Loader {
+				silenced := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "SyntheticSharedFiring003",
+							"namespace": "openshift-storage",
+							"severity":  "critical",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silenced, nil)
+				return mocked
+			}(),
+			expected: []model.LabelSet{
+				{
+					"alertname": "SyntheticSharedFiring003",
+					"namespace": "openshift-storage",
+					"severity":  "critical",
+					"component": "storage",
+					"silenced":  "true",
+				},
+				{
+					"alertname": "SyntheticSharedFiring003",
+					"namespace": "openshift-network",
+					"severity":  "critical",
+					"component": "network",
+					"silenced":  "false",
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "unhappy path, alertmanager error",
 			args: args{
 				alerts: []model.LabelSet{
 					{
@@ -270,18 +423,22 @@ func Test_evaluateSilences(t *testing.T) {
 					},
 				},
 			},
-			alertManagerErr: errors.New("alertmanager error"),
-			wantErr:         errors.New("alertmanager error"),
+			amLoader: func() alertmanager.Loader {
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(nil, errors.New("alertmanager error"))
+				return mocked
+			}(),
+			wantErr: errors.New("alertmanager error"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testProcessor := processor{
-				amLoader: mocks.NewMockAlertLoader(nil, tt.silenced, tt.alertManagerErr),
+				amLoader: tt.amLoader,
 			}
 			got, err := testProcessor.evaluateSilences(tt.args.alerts)
-			assert.Equal(t, tt.expected, got)
+			assert.ElementsMatch(t, tt.expected, got)
 			assert.Equal(t, tt.wantErr, err)
 		})
 	}

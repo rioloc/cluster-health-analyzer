@@ -31,7 +31,7 @@ metrics:
 
 ```
 # Mapping of source signal to components and incident groups.
-cluster:health:components:map
+cluster_health_components_map
 {
   # Identifier of the source signal type
   type="alert"
@@ -45,6 +45,9 @@ cluster:health:components:map
   layer="compute",
   component="compute",
 
+  # wether the alert is silenced or not
+  silenced="false",
+
   # Incident group id
   group_id="b8d9df3f-8245-4f5a-825d-15578a6c8397",
 
@@ -54,7 +57,7 @@ cluster:health:components:map
 
 ```
 # Metadata about the components in the system
-cluster:health:components
+cluster_health_components
 {
   # Identifier of the component
   component="compute", layer="compute"
