@@ -76,6 +76,11 @@ simulate:
 build:
 	go build -o bin/cluster-health-analyzer . 
 
+## lightspeed-eval > run light
+.PHONY: lightspeed-eval
+lightspeed-eval:
+	./hack/lightspeed-eval.sh ./test/mcp/system.yaml ./test/mcp/demo_etcd.yaml
+
 # ----------------
 # Deploy
 # ----------------

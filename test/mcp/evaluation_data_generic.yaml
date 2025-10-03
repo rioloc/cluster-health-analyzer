@@ -1,0 +1,141 @@
+# LightSpeed Evaluation Framework - OpenShift Domain Test Data
+
+- conversation_group_id: "openshift_incident_detection_comprehensive"
+  description: "Comprehensive evaluation of get_incidents MCP tool functionality"
+
+  conversation_metrics: []
+  conversation_metrics_metadata: {}
+
+  turns:
+    # Test Case 1: Basic cluster health inquiry
+    - turn_id: "basic_health_check"
+      query: "Is my cluster healthy?"
+      response: null  # Will be populated by API
+      contexts:
+        - "An incident is a group of related alerts that share the same root cause."
+        - "Each incident has a unique incident ID (UUID format)."
+        - "Each incident contains one or more alerts with details like alertname, severity, namespace."
+        - "Incident severity levels include: critical, warning, info."
+        - "Incident status can be 'firing' (active) or 'resolved' (no longer active)."
+        - "The get_incidents tool retrieves current cluster incidents to assess health status."
+      expected_response: "Based on the current incidents in your cluster, I can provide a health assessment. The cluster has [number] active incidents affecting various components. Here are the details of each incident with their severity levels and affected components."
+
+      expected_tool_calls:
+        -
+          - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:faithfulness"
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+        - "custom:tool_eval"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.75
+
+
+    # Test Case 2: Specific incident inquiry
+    - turn_id: "current_incidents"
+      query: "What incidents are currently affecting my cluster?"
+      response: null
+      contexts:
+        - "Active incidents represent ongoing issues in the cluster."
+        - "Incidents group related alerts by common root causes."
+        - "Each incident includes start time, severity, and affected components."
+        - "Incident information helps in troubleshooting cluster issues."
+      expected_response: "Here are the current incidents affecting your cluster. Each incident represents a group of related alerts that may share the same root cause."
+
+      expected_tool_calls:
+        -
+          - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:tool_eval"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.80
+
+    # Test Case 3: Recent problems inquiry
+    - turn_id: "recent_problems" 
+      query: "Are there any recent problems or alerts in my OpenShift cluster?"
+      response: null
+      contexts:
+        - "Recent problems are typically captured as incidents within the last few hours."
+        - "The max_age_hours parameter controls how far back to look for incidents."
+        - "Problems can include pod failures, resource issues, networking problems, etc."
+        - "Alert severity helps prioritize which problems need immediate attention."
+      expected_response: "Let me check for recent problems in your OpenShift cluster by reviewing the current incidents and alerts."
+
+      expected_tool_calls:
+        -
+          - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:tool_eval"
+
+    # Test Case 4: Monitoring system inquiry
+    - turn_id: "monitoring_issues"
+      query: "Is my monitoring system working correctly?"
+      response: null
+      contexts:
+        - "Monitoring system health can be assessed through incidents affecting monitoring components."
+        - "Common monitoring issues include Alertmanager configuration problems, Prometheus issues, etc."
+        - "Incidents in openshift-monitoring namespace often indicate monitoring problems."
+      expected_response: "I'll check the current incidents to assess your monitoring system health, particularly looking for any issues affecting monitoring components."
+
+      expected_tool_calls:
+        -
+          - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:tool_eval"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.75
+
+    # Test Case 5: Alert references as HTML links
+    - turn_id: "alert_references_html_links"
+      query: "What are the current alerts in my cluster? Please include links to the alerts."
+      response: null
+      contexts:
+        - "Incident URLs provide direct links to the OpenShift console monitoring page."
+        - "Alert references should be formatted as clickable HTML links when presenting incidents."
+        - "The url_details field in incident data contains the console URL for each incident."
+        - "HTML links should use <a href='URL'>text</a> format for better user experience."
+      expected_response: "Here are the current alerts in your cluster with links to view them in the OpenShift console. Each incident includes clickable links to help you investigate further."
+
+      expected_tool_calls:
+        -
+          - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:faithfulness"
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "ragas:faithfulness":
+          threshold: 0.80
+        "ragas:response_relevancy":
+          threshold: 0.85
+        "custom:answer_correctness":
+          threshold: 0.75
+
