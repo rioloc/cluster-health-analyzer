@@ -76,6 +76,11 @@ simulate:
 build:
 	go build -o bin/cluster-health-analyzer . 
 
+.PHONY: deepeval
+deepeval:
+	oc apply -f ./test-mcp/test_mcp_alerts.yaml
+	LS_API_KEY=$$(oc whoami -t) deepeval test run ./test-mcp/test_mcp_get_incidents.py
+
 # ----------------
 # Deploy
 # ----------------

@@ -1,0 +1,29 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: testing-prometheus-rule
+  namespace: openshift-monitoring
+spec:
+  groups:
+  - name: mcp_alert_1
+    rules:
+    - alert: McpTestAlert1
+      annotations:
+        description: This is the first test alert for the mcp server
+        summary: Always active alert with some labels.
+      expr: vector(1)
+      for: 10s
+      labels:
+        namespace: openshift-monitoring
+        severity: warning
+  - name: mcp_alert_2
+    rules:
+    - alert: McpTestAlert2
+      annotations:
+        description: This is the second test alert for the mcp server
+        summary: Always active alert with some labels.
+      expr: vector(1)
+      for: 10s
+      labels:
+        namespace: openshift-monitoring
+        severity: warning
