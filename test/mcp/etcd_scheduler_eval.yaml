@@ -1,0 +1,130 @@
+# LightSpeed Evaluation Framework - Focused Query Test Data
+# Test queries for specific incident analysis scenarios
+
+- conversation_group_id: "generic_listing_questions"
+  description: "Generic listing questions about incidents and alerts without expanding the details"
+
+  conversation_metrics: []
+  conversation_metrics_metadata: {}
+
+  turns:
+    - turn_id: "list_only_critical_firing_alerts"
+      query: "What are the firing alerts?"
+      response: null
+      contexts:
+        - "The incident severity depends on the highest alert severity within the incident."
+        - "The incident with ID a96081f6-542e-4a60-b3bb-6bb7d5b2e169 is the only one firing with critical severity."
+        - "Among all the alerts involved in the incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169, the only critical alert is KubeSchedulerDown in the namespace openshift-kube-scheduler."
+        - "Other incidents and alerts firing in the cluster have a lower severity (warning or info)."
+      expected_response: |
+        The only critical firing alert is KubeSchedulerDown in the namespace openshift-kube-scheduler. The alert is part of the incident with ID a96081f6-542e-4a60-b3bb-6bb7d5b2e169. Other alerts in the incident are of warning severity and are not critical.
+
+      expected_tool_calls:
+        - - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.8
+
+- conversation_group_id: "focused_incident_analysis"
+  description: "Focused evaluation queries for incident explanations and application troubleshooting"
+
+  conversation_metrics: []
+  conversation_metrics_metadata: {}
+
+  turns:
+    - turn_id: "pod_not_ready_issue"
+      query: "Why is the alert KubePodNotReady happening?"
+      response: null
+      contexts:
+        - "The KubePodNotReady alert indicates if a pod is not in a steady state."
+        - "A pod may not be in a steady state due to scheduling issues or other control plane issues."
+        - "KubePodNotReady is part of the critical incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169, which also includes other related alerts like KubeSchedulerDown, which is the likely cause of KubePodNotReady."
+      expected_response: |
+        The alert KubePodNotReady is currently firing in the "my-app" namespace and is part of the critical incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169, which indicates pod readiness failures. The incident also includes other alerts. One of the included alerts is KubeSchedulerDown, which signals scheduling issues that are likely causing the pod to not reach a steady state.
+
+      expected_tool_calls:
+        - - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.90
+
+    - turn_id: "explain_incident_details"
+      query: "Explain incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169"
+      response: null
+      contexts:
+        - "Incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169 is a critical incident that contains multiple alerts."
+        - "This incident contains etcd, scheduler, controller manager, and storage alerts."
+        - "The incident started with etcd problems and cascaded to other components."
+        - "The current firing alerts within the incident are: KubePodNotReady, KubeSchedulerDown, and KubePersistentVolumeErrors."
+      expected_response: |
+        Incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169 represents a critical-severity event causing "my-app" pod availability problems and storage subsystem failures. The incident is related to three active alerts: "KubePodNotReady" within the "my-app" namespace, "KubeSchedulerDown" for the "openshift-kube-scheduler" namespace, and "KubePersistentVolumeErrors" originating from "openshift-storage." This configuration suggests that application pods cannot reach operational readiness due to scheduling issues and storage infrastructure issues impacting persistent volume functionality.
+
+      expected_tool_calls:
+        - - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.70
+
+    - turn_id: "why_is_my_app_down"
+      query: "Why is my-app down?"
+      response: null
+      contexts:
+        - "my-app is down because incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169 is impacting etcd and other control plane components."
+        - "The critical incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169 indicates alerts, like KubePodNotReady and KubeSchedulerDown, that are causing pod readiness failures. This means new pods in the my-app namespace can't reach a steady state."
+        - "KubePersistentVolumeErrors in incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169 means there are persistent volume errors in the storage namespace that might affect my-app's storage."
+      expected_response: |
+        "my-app" is down likely due to the incident with ID a96081f6-542e-4a60-b3bb-6bb7d5b2e169, which involves etcd degradation and other component failures. This incident includes a critical alert "KubeSchedulerDown" and a warning alert "KubePodNotReady" specifically in the "my-app" namespace, indicating pod readiness issues. Additionally, there are persistent volume errors in the storage namespace that might affect my-app's storage.
+
+      expected_tool_calls:
+        - - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.70
+
+    - turn_id: "why_is_scheduler_down"
+      query: "Why is the scheduler down?"
+      response: null
+      contexts:
+        - "There may be a case of having overlapping alerts in different incidents."
+        - "The reason why the scheduler is down is that there are two firing alerts impacting the scheduler functionality: one is KubeSchedulerDown in incident a96081f6-542e-4a60-b3bb-6bb7d5b2e169, and the other is KubeSchedulerDown in incident 888888-3803-4ba0-a130-97994fd1234asd88."
+      expected_response: |
+        There are scheduling issues pointed out by the KubeSchedulerDown alerts in multiple incidents. The first instance of the alert is in the incident with ID a96081f6-542e-4a60-b3bb-6bb7d5b2e169. The second instance of the alert is in the incident with ID 888888-3803-4ba0-a130-97994fd1234asd88. Both alerts are related to the openshift-kube-scheduler namespace.
+      expected_tool_calls:
+        - - tool_name: get_incidents
+            arguments:
+              max_age_hours: "\\d+"
+
+      turn_metrics:
+        - "ragas:response_relevancy"
+        - "custom:answer_correctness"
+
+      turn_metrics_metadata:
+        "custom:answer_correctness":
+          threshold: 0.70
