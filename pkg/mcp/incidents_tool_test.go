@@ -24,10 +24,13 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	baseTime := model.Now()
+
 	type args struct {
-		ctx     context.Context
-		request *mcp.CallToolRequest
-		params  GetIncidentsParams
+		ctx      context.Context
+		request  *mcp.CallToolRequest
+		params   GetIncidentsParams
+		pageSize int
 	}
 
 	tests := []struct {
@@ -54,7 +57,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -68,7 +71,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -85,7 +88,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -100,7 +103,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -114,7 +117,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: baseTime.Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -157,7 +160,6 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -218,7 +220,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -232,7 +234,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -246,7 +248,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     0,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -263,7 +265,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -278,7 +280,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -292,7 +294,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: baseTime.Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -327,15 +329,15 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				return mocked
 			}(),
 			args: args{
-				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
-				request: &mcp.CallToolRequest{},
+				ctx:      context.WithValue(t.Context(), authHeaderStr, "test"),
+				pageSize: DefaultGetIncidentsLimit,
+				request:  &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
 					TimeRange:   uint(300),
 					MinSeverity: processor.Warning.String(),
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -386,6 +388,9 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := IncidentTool{
 				Tool: defaultMcpGetIncidentsTool,
+				cfg: incidentToolCfg{
+					incidentsPageSize: 2,
+				},
 				getPrometheusLoaderFn: func(url, _ string) (prom.Loader, error) {
 					return tt.promLoader, nil
 				},
@@ -1234,6 +1239,185 @@ func TestGetConsoleURL(t *testing.T) {
 			r, err := getConsoleURL(t.Context(), tt.promLoader)
 			assert.Equal(t, tt.expectedErr, err)
 			assert.Equal(t, tt.expectedResult, r)
+		})
+	}
+}
+
+func Test_getIncidentsPageResult(t *testing.T) {
+	startTime := time.Now()
+	endTime := startTime.Add(5 * time.Minute)
+
+	incidents := []Incident{
+		{
+			GroupId:   "uuid-1",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(1 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-2",
+			StartTime: formatToRFC3339(startTime.Add(1 * time.Minute)),
+			EndTime:   formatToRFC3339(startTime.Add(2 * time.Minute)),
+		},
+		// simulate 3 and 4 at the same start time
+		{
+			GroupId:   "uuid-3",
+			StartTime: formatToRFC3339(startTime.Add(2 * time.Minute)),
+			EndTime:   formatToRFC3339(startTime.Add(3 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-4",
+			StartTime: formatToRFC3339(startTime.Add(2 * time.Minute)),
+			EndTime:   formatToRFC3339(startTime.Add(4 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-5",
+			StartTime: formatToRFC3339(startTime.Add(3 * time.Minute)),
+			EndTime:   formatToRFC3339(startTime.Add(5 * time.Minute)),
+		},
+	}
+
+	type args struct {
+		queryTimeRange v1.Range
+		pageSize       int
+		requestCursor  *PaginationCursor
+		incidents      []Incident
+	}
+	tests := []struct {
+		name         string
+		args         args
+		wantResponse mcp.CallToolResult
+		wantErr      error
+	}{
+		{
+			name: "first request, no request cursor, first page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   endTime,
+					Step:  300,
+				},
+				pageSize: 2,
+				incidents: func(origin []Incident) []Incident {
+					copied := make([]Incident, len(origin))
+					copy(copied, origin)
+					return copied
+				}(incidents),
+			},
+			wantResponse: func() mcp.CallToolResult {
+				reqCursor := PaginationCursor{
+					TimeStart: startTime.Unix(),
+					TimeLast:  startTime.Add(2 * time.Minute).Unix(), // inc 4 startTime
+					GroupLast: "uuid-4",
+				}
+				nextCursor, _ := reqCursor.Encode()
+				r := Response{
+					NextCursor: nextCursor,
+					Incidents: Incidents{
+						Total:     2,
+						Incidents: []Incident{incidents[4], incidents[3]},
+					},
+				}
+				data, _ := json.Marshal(r)
+				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+				return mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{
+							Text: response,
+						},
+					},
+				}
+			}(),
+		},
+		{
+			name: "second request w request cursor, second page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   startTime.Add(2 * time.Minute), // inc 4 startTime
+					Step:  300,
+				},
+				pageSize: 2,
+				requestCursor: &PaginationCursor{
+					TimeStart: startTime.Unix(),
+					TimeLast:  startTime.Add(2 * time.Minute).Unix(), // inc 4 startTime
+					GroupLast: "uuid-4",
+				},
+				incidents: func(origin []Incident) []Incident {
+					copied := make([]Incident, len(origin))
+					// simulate 3 and 4 at the same start time
+					copy(copied, origin)
+					return copied[0:4]
+				}(incidents),
+			},
+			wantResponse: func() mcp.CallToolResult {
+				reqCursor := PaginationCursor{
+					TimeStart: startTime.Unix(),
+					TimeLast:  startTime.Add(1 * time.Minute).Unix(), // inc 2 startTime
+					GroupLast: "uuid-2",
+				}
+				nextCursor, _ := reqCursor.Encode()
+				r := Response{
+					NextCursor: nextCursor,
+					Incidents: Incidents{
+						Total:     2,
+						Incidents: []Incident{incidents[2], incidents[1]},
+					},
+				}
+				data, _ := json.Marshal(r)
+				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+				return mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{
+							Text: response,
+						},
+					},
+				}
+			}(),
+		},
+		{
+			name: "third request w request cursor, third page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   endTime,
+					Step:  300,
+				},
+				pageSize: 2,
+				requestCursor: &PaginationCursor{
+					TimeStart: startTime.Unix(),
+					TimeLast:  startTime.Add(2 * time.Minute).Unix(),
+					GroupLast: "uuid-4",
+				},
+				incidents: func(origin []Incident) []Incident {
+					copied := make([]Incident, len(origin))
+					copy(copied, origin)
+					return []Incident{copied[0]}
+				}(incidents),
+			},
+			wantResponse: func() mcp.CallToolResult {
+				r := Response{
+					Incidents: Incidents{
+						Total:     1,
+						Incidents: []Incident{incidents[0]},
+					},
+				}
+				data, _ := json.Marshal(r)
+				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+				return mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{
+							Text: response,
+						},
+					},
+				}
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := getIncidentsPageResult(tt.args.requestCursor, 2, tt.args.queryTimeRange, tt.args.incidents)
+			assert.Equal(t, tt.wantResponse, *got)
+			assert.Equal(t, tt.wantErr, err)
 		})
 	}
 }
