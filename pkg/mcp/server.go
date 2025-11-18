@@ -40,7 +40,7 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
 
 	server := mcp.NewServer(&impl, &mcp.ServerOptions{HasTools: true})
 
-	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL)
+	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL, DefaultGetIncidentsLimit)
 	// get_incidents
 	mcp.AddTool(server, &incTool.Tool, mcp.ToolHandlerFor[GetIncidentsParams, any](incTool.IncidentsHandler))
 

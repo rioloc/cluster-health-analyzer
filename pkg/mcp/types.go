@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -8,7 +10,8 @@ import (
 )
 
 type Response struct {
-	Incidents Incidents `json:"incidents"`
+	Incidents  Incidents `json:"incidents"`
+	NextCursor string    `json:"nextCursor,omitempty"`
 }
 
 type Incidents struct {
@@ -77,4 +80,37 @@ func (i *Incident) UpdateStatus() {
 	} else {
 		i.Status = "resolved"
 	}
+}
+
+// PaginationCursor represents the cursor used in paginated requests/responses
+type PaginationCursor struct {
+	// TimeStart  defines the absolute historical limit for the entire pagination session,
+	// telling the server when to stop
+	TimeStart int64 `json:"time_start"`
+	// TimeLast is timestamp of the oldest incident in the previous page
+	TimeLast int64 `json:"time_last"`
+	// GroupLast is the group_id of the oldest incident in the previous page
+	// It ensures stability if multiple incidents have the same TimeLast
+	GroupLast string `json:"group_last"`
+}
+
+func (r *PaginationCursor) Encode() (string, error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func DecodePaginationCursor(cursorStr string) (*PaginationCursor, error) {
+	data, err := base64.StdEncoding.DecodeString(cursorStr)
+	if err != nil {
+		return nil, err
+	}
+	var cursor PaginationCursor
+	err = json.Unmarshal(data, &cursor)
+	if err != nil {
+		return nil, err
+	}
+	return &cursor, nil
 }
