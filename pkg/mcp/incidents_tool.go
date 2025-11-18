@@ -26,24 +26,33 @@ import (
 var (
 	// Format response with instructions for better LLM interpretation
 	getIncidentsResponseTemplate = `<DATA>
-%s
-</DATA>
-<INSTRUCTIONS>
-- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident. 
-- Don't confuse or mix the concepts of incident and alert during your explanation.
-- For each incident, analyze its alerts to identify the affected components and the core problem. 
-- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
-- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
-</INSTRUCTIONS>`
+	%s
+	</DATA>
+	<INSTRUCTIONS>
+	- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident.
+	 Don't confuse or mix the concepts of incident and alert during your explanation.
+	- For each incident, analyze its alerts to identify the affected components and the core problem.
+	- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
+	- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
+	- If the nextCursor field is present in <DATA> block then you MUST always advise the user that the response is paginated, respecting the following criteria:
+			- The cursor should not be revelead to the user in the message. The goal is to get a better user experience.
+			- The question must be: "Due to the high volume of data, the response contains only a portion of incidents. Would you like to see more?"
+			- Never retrieve the next page if not explicitely requested by the user.
+			- Never use cursors provided by the user, but only use the from <DATA> section
+		If the user wants to see the next page a new request must be triggered with the last memorized cursor.
+	</INSTRUCTIONS>`
 )
 
 const (
 	getIncidentsToolName  = "get_incidents"
 	defaultTimeRangeHours = 360
+	defaultStep           = 300 * time.Second
 
 	clusterIDStr = "clusterID"
 	defaultStr   = "default"
 	silencedStr  = "silenced"
+
+	DefaultGetIncidentsPageSize = 10
 )
 
 type IncidentTool struct {
@@ -55,13 +64,15 @@ type IncidentTool struct {
 }
 
 type incidentToolCfg struct {
-	promURL         string
-	alertManagerURL string
+	promURL           string
+	alertManagerURL   string
+	incidentsPageSize int
 }
 
 type GetIncidentsParams struct {
 	TimeRange   uint   `json:"time_range"`
 	MinSeverity string `json:"min_severity"`
+	Cursor      string `json:"cursor"`
 }
 
 var (
@@ -80,15 +91,19 @@ var (
 				Pattern:     fmt.Sprintf("(?i)(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
 				Description: "Minimum severity level to be applied as filter for incidents. Allowed values, from lower severity to higher severity, can be: info, warning and critical. Default: warning.",
 			},
+			"cursor": {
+				Type:        "string",
+				Description: "Cursor used to implement pagination",
+			},
 		},
 	}
 
 	defaultMcpGetIncidentsTool = mcp.Tool{
 		Name: getIncidentsToolName,
 		Description: `List the current firing incidents in the cluster. 
-		One incident is a group of related alerts that are likely triggered by the same root cause.
-		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
-		`,
+			One incident is a group of related alerts that are likely triggered by the same root cause.
+			Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
+			`,
 		Annotations: &mcp.ToolAnnotations{
 			Title:        "Provides information about Incidents in the cluster",
 			ReadOnlyHint: true,
@@ -101,12 +116,13 @@ var (
 )
 
 // NewIncidentsTool creates a new MCP tool for the incidents
-func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
+func NewIncidentsTool(promURL, alertmanagerURL string, pageSize int) IncidentTool {
 	return IncidentTool{
 		Tool: defaultMcpGetIncidentsTool,
 		cfg: incidentToolCfg{
-			promURL:         promURL,
-			alertManagerURL: alertmanagerURL,
+			promURL:           promURL,
+			alertManagerURL:   alertmanagerURL,
+			incidentsPageSize: pageSize,
 		},
 		getPrometheusLoaderFn:   defaultPrometheusLoader,
 		getAlertManagerLoaderFn: defaultAlertManagerLoader,
@@ -116,41 +132,36 @@ func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
 // IncidentsHandler is the main handler for the Incidents. It connects to the
 // in-cluster Prometheus and queries the Incidents metrics.
 func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallToolRequest, params GetIncidentsParams) (*mcp.CallToolResult, any, error) {
+	var (
+		cursor         *RequestCursor
+		queryTimeRange v1.Range
+	)
 	slog.Info("Incidents tool received request with ", "params", params)
+
 	token, err := getTokenFromCtx(ctx)
 	if err != nil {
 		slog.Error(err.Error())
 		return nil, nil, err
 	}
 
-	amLoader, err := i.getAlertManagerLoaderFn(i.cfg.alertManagerURL, token)
+	promLoader, amLoader, err := i.initLoaders(token)
 	if err != nil {
-		slog.Error("Failed to initialize AlertManager client", "error", err)
 		return nil, nil, err
 	}
 
-	promLoader, err := i.getPrometheusLoaderFn(i.cfg.promURL, token)
+	if params.Cursor != "" {
+		cursor, err = DecodeRequestCursor(params.Cursor)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	queryTimeRange, err = getQueryTimeRange(time.Now(), params, cursor)
 	if err != nil {
-		slog.Error("Failed to initialize Prometheus client", "error", err)
 		return nil, nil, err
 	}
 
-	timeRange := defaultTimeRangeHours
-	if params.TimeRange > 0 {
-		timeRange = int(params.TimeRange)
-	}
-
-	// the method ParseHealthValue will default to warning in the case of not recognized severity
-	minSeverity := processor.ParseHealthValue(params.MinSeverity)
-
-	timeNow := time.Now()
-	queryTimeRange := v1.Range{
-		Start: timeNow.Add(-time.Duration(timeRange) * time.Hour),
-		End:   timeNow,
-		Step:  300 * time.Second,
-	}
-
-	val, err := promLoader.LoadVectorRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange.Start, queryTimeRange.End, queryTimeRange.Step)
+	componentsHealth, err := promLoader.LoadVectorRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange.Start, queryTimeRange.End, queryTimeRange.Step)
 	if err != nil {
 		slog.Error("Received error response from Prometheus", "error", err)
 		return nil, nil, err
@@ -161,40 +172,53 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
 		return nil, nil, err
 	}
+
 	clusterIDconsoleURL, err := getConsoleURL(ctx, promLoader)
 	if err != nil {
 		slog.Error("Failed retrieving console URL from metrics", "error", err)
 	}
-	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange, clusterIDconsoleURL)
+
+	incidentsMap, err := i.transformPromValueToIncident(componentsHealth, queryTimeRange, clusterIDconsoleURL)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, nil, err
 	}
 
+	// TODO We should paginate before or after filtering by severity??
+
 	incidents := filterIncidentsBySeverity(
 		getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange),
-		minSeverity,
+		// the method ParseHealthValue will default to warning in the case of not recognized severity
+		processor.ParseHealthValue(params.MinSeverity),
 	)
 
-	r := Response{
-		Incidents: Incidents{
-			Total:     len(incidents),
-			Incidents: incidents,
-		},
-	}
-
-	data, err := json.Marshal(r)
+	// if incidents are more than the pagination size
+	response, err := buildResponseFromIncidents(queryTimeRange, i.cfg.incidentsPageSize, cursor, incidents)
 	if err != nil {
-		slog.Error("Failed to marshal the Incident data", "error", err)
 		return nil, nil, err
 	}
 
-	response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: response},
 		},
 	}, nil, nil
+}
+
+func (i *IncidentTool) initLoaders(token string) (prom.Loader, alertmanager.Loader, error) {
+	promLoader, err := i.getPrometheusLoaderFn(i.cfg.promURL, token)
+	if err != nil {
+		slog.Error("Failed to initialize Prometheus client", "error", err)
+		return nil, nil, err
+	}
+
+	amLoader, err := i.getAlertManagerLoaderFn(i.cfg.alertManagerURL, token)
+	if err != nil {
+		slog.Error("Failed to initialize AlertManager client", "error", err)
+		return nil, nil, err
+	}
+
+	return promLoader, amLoader, nil
 }
 
 // formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time
@@ -203,6 +227,73 @@ func formatToRFC3339(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
+}
+
+func getQueryTimeRange(timeNow time.Time, params GetIncidentsParams, requestCursor *RequestCursor) (v1.Range, error) {
+	if requestCursor != nil {
+		return v1.Range{
+			Start: time.Unix(requestCursor.Start, 0),
+			End:   time.Unix(requestCursor.End, 0),
+			Step:  defaultStep,
+		}, nil
+	}
+	timeRange := defaultTimeRangeHours
+	if params.TimeRange > 0 {
+		timeRange = int(params.TimeRange)
+	}
+
+	return v1.Range{
+		Start: timeNow.Add(-time.Duration(timeRange) * time.Hour),
+		End:   timeNow,
+		Step:  defaultStep,
+	}, nil
+}
+
+func buildResponseFromIncidents(queryTimeRange v1.Range, pageSize int, requestCursor *RequestCursor, incidents []Incident) (string, error) {
+	var newCursor *RequestCursor
+
+	if len(incidents) > pageSize {
+		from := int64(0)
+
+		if requestCursor != nil {
+			from += requestCursor.Offset
+		}
+
+		to := min(from+int64(pageSize), int64(len(incidents)))
+
+		if to < int64(len(incidents)) {
+			newCursor = &RequestCursor{
+				Start:  queryTimeRange.Start.Unix(),
+				End:    queryTimeRange.End.Unix(),
+				Offset: to,
+			}
+		}
+
+		incidents = incidents[from:to]
+	}
+
+	r := Response{
+		Incidents: Incidents{
+			Total:     len(incidents),
+			Incidents: incidents,
+		},
+	}
+
+	if newCursor != nil {
+		cursorStr, err := newCursor.Encode()
+		if err != nil {
+			return "", err
+		}
+		r.NextCursor = cursorStr
+	}
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		slog.Error("Failed to marshal the Incident data", "error", err)
+		return "", err
+	}
+
+	return fmt.Sprintf(getIncidentsResponseTemplate, string(data)), nil
 }
 
 // processSampleTime calculates the delta between the two samples and if it's greater
@@ -414,6 +505,18 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 		incidentsSlice = append(incidentsSlice, inc)
 	}
+
+	// sorting incident by start time. Needed because incidentsMap order is not guaranteed
+	slices.SortFunc(incidentsSlice, func(i1, i2 Incident) int {
+		delta := strings.Compare(i1.StartTime, i2.StartTime)
+		if delta != 0 {
+			return delta
+		}
+		// if two incidents have the same StartTime  then order it by name
+		// name is guaranteed to be unique
+		return strings.Compare(i1.GroupId, i2.GroupId)
+	})
+
 	return incidentsSlice
 }
 

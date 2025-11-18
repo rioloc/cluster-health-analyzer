@@ -24,6 +24,8 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	baseTime := model.Now()
+
 	type args struct {
 		ctx     context.Context
 		request *mcp.CallToolRequest
@@ -54,7 +56,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -68,7 +70,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -85,7 +87,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -100,7 +102,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -114,7 +116,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: baseTime.Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -157,7 +159,6 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -218,7 +219,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -232,7 +233,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -246,7 +247,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     0,
-								Timestamp: model.Now().Add(-1 * time.Minute),
+								Timestamp: baseTime.Add(-1 * time.Minute),
 							},
 						},
 					},
@@ -263,7 +264,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -278,7 +279,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: baseTime.Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -292,7 +293,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: baseTime.Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -335,7 +336,6 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -380,12 +380,271 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				}
 			}(),
 		},
+		{
+			name: "happy path with pagination",
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"group_id":      "123",
+							"src_alertname": "ClusterOperatorDown",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "warning",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"group_id":      "123",
+							"src_alertname": "UpdateAvailable",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "info",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"group_id":      "456",
+							"src_alertname": "ClusterOperatorDown",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "warning",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"group_id":      "456",
+							"src_alertname": "UpdateAvailable",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "info",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"group_id":      "789",
+							"src_alertname": "KubeSchedulerDown",
+							"src_namespace": "openshift-kube-scheduler",
+							"src_severity":  "critical",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime,
+							},
+						},
+					},
+				}, nil)
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "ClusterOperatorDown",
+							"namespace":  "openshift-monitoring",
+							"severity":   "warning",
+							"pod":        "bar",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-15 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "ClusterOperatorDown",
+							"namespace":  "openshift-monitoring",
+							"severity":   "warning",
+							"pod":        "foo",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-15 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "UpdateAvailable",
+							"namespace":  "openshift-monitoring",
+							"severity":   "info",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-20 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "KubeSchedulerDown",
+							"namespace":  "openshift-kube-scheduler",
+							"severity":   "critical",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: baseTime.Add(-10 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+
+				mocked.EXPECT().LoadQuery(gomock.Any(), `console_url`, gomock.Any()).Return(
+					[]model.LabelSet{
+						{model.LabelName("url"): model.LabelValue("test.url")},
+					}, nil)
+				return mocked
+			}(),
+			amLoader: func() alertmanager.Loader {
+				silencedAlerts := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "ClusterOperatorDown",
+							"namespace": "openshift-monitoring",
+							"severity":  "warning",
+							"pod":       "foo",
+						},
+					},
+					{
+						Labels: map[string]string{
+							"alertname": "UpdateAvailable",
+							"namespace": "openshift-monitoring",
+							"severity":  "info",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				return mocked
+			}(),
+			args: args{
+				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
+				request: &mcp.CallToolRequest{},
+				params: GetIncidentsParams{
+					TimeRange:   uint(300),
+					MinSeverity: processor.Healthy.String(),
+				},
+			},
+			expectedResult: func() *mcp.CallToolResult {
+				r := Response{
+					NextCursor: func(now model.Time) string {
+						cursor := RequestCursor{
+							Start:  baseTime.Add(-300 * time.Hour).Unix(),
+							End:    baseTime.Unix(),
+							Offset: 2,
+						}
+						next, _ := cursor.Encode()
+						return next
+					}(baseTime),
+					Incidents: Incidents{
+						Total: 2,
+						Incidents: []Incident{
+							{
+								GroupId:            "123",
+								Severity:           "warning",
+								Status:             "firing",
+								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
+								AffectedComponents: []string{""},
+								URL:                "test.url/monitoring/incidents?groupId=123",
+								Alerts: []model.LabelSet{
+									{
+										"name":       "UpdateAvailable",
+										"namespace":  "openshift-monitoring",
+										"severity":   "info",
+										"status":     "resolved",
+										"silenced":   "true",
+										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+									},
+									{
+										"name":       "ClusterOperatorDown",
+										"namespace":  "openshift-monitoring",
+										"severity":   "warning",
+										"status":     "resolved",
+										"silenced":   "false",
+										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+									},
+								},
+							},
+							{
+								GroupId:            "456",
+								Severity:           "warning",
+								Status:             "firing",
+								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
+								AffectedComponents: []string{""},
+								URL:                "test.url/monitoring/incidents?groupId=456",
+								Alerts: []model.LabelSet{
+									{
+										"name":       "UpdateAvailable",
+										"namespace":  "openshift-monitoring",
+										"severity":   "info",
+										"status":     "resolved",
+										"silenced":   "true",
+										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+									},
+									{
+										"name":       "ClusterOperatorDown",
+										"namespace":  "openshift-monitoring",
+										"severity":   "warning",
+										"status":     "resolved",
+										"silenced":   "false",
+										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+									},
+								},
+							},
+						},
+					},
+				}
+				data, _ := json.Marshal(r)
+				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{Text: response},
+					},
+				}
+			}(),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := IncidentTool{
 				Tool: defaultMcpGetIncidentsTool,
+				cfg: incidentToolCfg{
+					incidentsPageSize: 2,
+				},
 				getPrometheusLoaderFn: func(url, _ string) (prom.Loader, error) {
 					return tt.promLoader, nil
 				},
@@ -1234,6 +1493,150 @@ func TestGetConsoleURL(t *testing.T) {
 			r, err := getConsoleURL(t.Context(), tt.promLoader)
 			assert.Equal(t, tt.expectedErr, err)
 			assert.Equal(t, tt.expectedResult, r)
+		})
+	}
+}
+
+func Test_buildResponseFromIncidents(t *testing.T) {
+	startTime := time.Now()
+	endTime := startTime.Add(5 * time.Minute)
+
+	incidents := []Incident{
+		{
+			GroupId:   "uuid-1",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(1 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-2",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(2 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-3",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(3 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-4",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(4 * time.Minute)),
+		},
+		{
+			GroupId:   "uuid-5",
+			StartTime: formatToRFC3339(startTime),
+			EndTime:   formatToRFC3339(startTime.Add(5 * time.Minute)),
+		},
+	}
+
+	type args struct {
+		queryTimeRange v1.Range
+		pageSize       int
+		requestCursor  *RequestCursor
+		incidents      []Incident
+	}
+	tests := []struct {
+		name         string
+		args         args
+		wantResponse string
+		wantErr      error
+	}{
+		{
+			name: "first request, no request cursor, first page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   endTime,
+					Step:  300,
+				},
+				pageSize:  2,
+				incidents: incidents,
+			},
+			wantResponse: func() string {
+				reqCursor := RequestCursor{
+					Start:  startTime.Unix(),
+					End:    endTime.Unix(),
+					Offset: 2,
+				}
+				nextCursor, _ := reqCursor.Encode()
+				r := Response{
+					NextCursor: nextCursor,
+					Incidents: Incidents{
+						Total:     len(incidents[0:2]),
+						Incidents: incidents[0:2],
+					},
+				}
+				data, _ := json.Marshal(r)
+				return fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+			}(),
+		},
+		{
+			name: "second request w request cursor, second page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   endTime,
+					Step:  300,
+				},
+				pageSize: 2,
+				requestCursor: &RequestCursor{
+					Start:  startTime.Unix(),
+					End:    endTime.Unix(),
+					Offset: 2,
+				},
+				incidents: incidents,
+			},
+			wantResponse: func() string {
+				reqCursor := RequestCursor{
+					Start:  startTime.Unix(),
+					End:    endTime.Unix(),
+					Offset: 4,
+				}
+				nextCursor, _ := reqCursor.Encode()
+				r := Response{
+					NextCursor: nextCursor,
+					Incidents: Incidents{
+						Total:     len(incidents[2:4]),
+						Incidents: incidents[2:4],
+					},
+				}
+				data, _ := json.Marshal(r)
+				return fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+			}(),
+		},
+		{
+			name: "third request w request cursor, third page",
+			args: args{
+				queryTimeRange: v1.Range{
+					Start: startTime,
+					End:   endTime,
+					Step:  300,
+				},
+				pageSize: 2,
+				requestCursor: &RequestCursor{
+					Start:  startTime.Unix(),
+					End:    endTime.Unix(),
+					Offset: 4,
+				},
+				incidents: incidents,
+			},
+			wantResponse: func() string {
+				r := Response{
+					Incidents: Incidents{
+						Total:     len(incidents[4:5]),
+						Incidents: incidents[4:5],
+					},
+				}
+				data, _ := json.Marshal(r)
+				return fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+			}(),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildResponseFromIncidents(tt.args.queryTimeRange, tt.args.pageSize, tt.args.requestCursor, tt.args.incidents)
+			assert.Equal(t, tt.wantResponse, got)
+			assert.Equal(t, tt.wantErr, err)
 		})
 	}
 }
