@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -8,7 +10,8 @@ import (
 )
 
 type Response struct {
-	Incidents Incidents `json:"incidents"`
+	Incidents  Incidents `json:"incidents"`
+	NextCursor string    `json:"nextCursor"`
 }
 
 type Incidents struct {
@@ -77,4 +80,31 @@ func (i *Incident) UpdateStatus() {
 	} else {
 		i.Status = "resolved"
 	}
+}
+
+// RequestCursor represents the cursor used in paginated requests/responses
+type RequestCursor struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+func (r *RequestCursor) Encode() (string, error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func DecodeRequestCursor(cursor string) (*RequestCursor, error) {
+	data, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return nil, err
+	}
+	var reqCursor RequestCursor
+	err = json.Unmarshal(data, &reqCursor)
+	if err != nil {
+		return nil, err
+	}
+	return &reqCursor, nil
 }
