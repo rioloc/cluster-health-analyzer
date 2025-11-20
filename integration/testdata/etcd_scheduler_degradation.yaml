@@ -1,0 +1,49 @@
+# This scenario is basically the same as etcd_degradataion.yaml with an additional firing incident which duplicates the KubeSchedulerDown alert.
+# The goal is to test how the model behaves when an alert is duplicated accross differen incidents
+name: "Infrastructure Incident Scenario"
+description: "Complex etcd and Kubernetes infrastructure incidents with timing variations, plus cluster maintenance alerts."
+incidents:
+  # Incident 2: Cluster update available
+  - id: "9ce79082-3803-4ba0-a130-97994fd7966b"
+    component: "version"
+    layer: "core"
+    timeline:
+      start: "4d"
+    alerts:
+      - name: "UpdateAvailable"
+        namespace: "openshift-cluster-version"
+        severity: "warning"
+        firing: true
+        silenced: true
+        timeline:
+          start: "4d"
+
+  # Incident 3: AlertManager configuration issue
+  - id: "95eed194-2778-467d-8fd1-c2128b164151"
+    component: "monitoring"
+    layer: "core"
+    timeline:
+      start: "4d"
+    alerts:
+      - name: "AlertmanagerReceiversNotConfigured"
+        namespace: "openshift-monitoring"
+        severity: "warning"
+        firing: true
+        silenced: false
+        timeline:
+          start: "4d"
+
+  # Incident 4: Scheduler incident
+  - id: "888888-3803-4ba0-a130-97994fd1234asd88"
+    component: "scheduler"
+    layer: "core"
+    timeline:
+      start: "4d"
+    alerts:
+      - name: "KubeSchedulerDown"
+        namespace: "openshift-kube-scheduler"
+        severity: "critical"
+        firing: true
+        silenced: false
+        timeline:
+          start: "4d"

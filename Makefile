@@ -61,6 +61,16 @@ run:
 run-mcp:
 	go run ./main.go mcp
 
+## debug-mcp> run delve in headless mode targetting the mcp server
+.PHONY: debug-mcp
+debug-mcp:
+	 dlv debug github.com/openshift/cluster-health-analyzer --headless --api-version 2 --listen 127.0.0.1:8181 -- mcp
+
+## integration-mcp> run mcp integration tests with promcker
+.PHONY: integration-mcp
+integration-mcp:
+	go clean -testcache && go test -v ./integration/...
+
 ## generate> run go generate
 .PHONY: generate
 generate:
