@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -39,6 +40,7 @@ var (
 			- The question must be: "Due to the high volume of data, the response contains only a portion of incidents. Would you like to see more?"
 			- Never retrieve the next page if not explicitely requested by the user.
 			- Never use cursors provided by the user, but only use the from <DATA> section
+			- Never change or truncate the cursor
 		If the user wants to see the next page a new request must be triggered with the last memorized cursor.
 	</INSTRUCTIONS>`
 )
@@ -132,77 +134,36 @@ func NewIncidentsTool(promURL, alertmanagerURL string, pageSize int) IncidentToo
 // IncidentsHandler is the main handler for the Incidents. It connects to the
 // in-cluster Prometheus and queries the Incidents metrics.
 func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallToolRequest, params GetIncidentsParams) (*mcp.CallToolResult, any, error) {
-	var (
-		cursor         *RequestCursor
-		queryTimeRange v1.Range
-	)
-	slog.Info("Incidents tool received request with ", "params", params)
-
-	token, err := getTokenFromCtx(ctx)
-	if err != nil {
-		slog.Error(err.Error())
-		return nil, nil, err
+	switch params.Cursor {
+	case "eyJzdGFydCI6MTc2MzM5MjU0MywiZW5kIjoxNzY0Njg4NTQzLCJvZmZzZXQiOjEwfQ==":
+		fmt.Println("returning second page")
+		return mockResposeFromFile("./pkg/mcp/page_2_mock.txt"), nil, nil
+	case "eyJzdGFydCI6MTc2MzM5MjIxMSwiZW5kIjoxNzY0Njg4MjExLCJvZmZzZXQiOjIwfQ==":
+		fmt.Println("returning third and last page")
+		return mockResposeFromFile("./pkg/mcp/page_3_mock.txt"), nil, nil
+	default:
+		fmt.Println("returning first page")
+		return mockResposeFromFile("./pkg/mcp/page_1_mock.txt"), nil, nil
 	}
+}
 
-	promLoader, amLoader, err := i.initLoaders(token)
+func mockResposeFromFile(path string) *mcp.CallToolResult {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	if params.Cursor != "" {
-		cursor, err = DecodeRequestCursor(params.Cursor)
-		if err != nil {
-			return nil, nil, err
+		slog.Error("Failed to read mock file", "path", path, "error", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Error reading mock file %s: %v", path, err)},
+			},
 		}
 	}
 
-	queryTimeRange, err = getQueryTimeRange(time.Now(), params, cursor)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	componentsHealth, err := promLoader.LoadVectorRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange.Start, queryTimeRange.End, queryTimeRange.Step)
-	if err != nil {
-		slog.Error("Received error response from Prometheus", "error", err)
-		return nil, nil, err
-	}
-
-	silences, err := amLoader.SilencedAlerts()
-	if err != nil {
-		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
-		return nil, nil, err
-	}
-
-	clusterIDconsoleURL, err := getConsoleURL(ctx, promLoader)
-	if err != nil {
-		slog.Error("Failed retrieving console URL from metrics", "error", err)
-	}
-
-	incidentsMap, err := i.transformPromValueToIncident(componentsHealth, queryTimeRange, clusterIDconsoleURL)
-	if err != nil {
-		slog.Error("Failed to transform metric data", "error", err)
-		return nil, nil, err
-	}
-
-	// TODO We should paginate before or after filtering by severity??
-
-	incidents := filterIncidentsBySeverity(
-		getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange),
-		// the method ParseHealthValue will default to warning in the case of not recognized severity
-		processor.ParseHealthValue(params.MinSeverity),
-	)
-
-	// if incidents are more than the pagination size
-	response, err := buildResponseFromIncidents(queryTimeRange, i.cfg.incidentsPageSize, cursor, incidents)
-	if err != nil {
-		return nil, nil, err
-	}
-
+	response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: response},
 		},
-	}, nil, nil
+	}
 }
 
 func (i *IncidentTool) initLoaders(token string) (prom.Loader, alertmanager.Loader, error) {
