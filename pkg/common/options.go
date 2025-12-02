@@ -26,6 +26,9 @@ type Options struct {
 
 	// path to the components yaml file
 	ComponentsPath string
+
+	// Mock prefix path for MCP incidents tool
+	MockPrefixPath string
 }
 
 // flags returns supported cli flags for the options.
@@ -51,5 +54,7 @@ func (o *Options) Flags() *pflag.FlagSet {
 		"Flag to disable incident detection and related metrics")
 	fs.StringVar(&o.ComponentsPath, "components", o.ComponentsPath,
 		"The path to the components yaml file - for testing purposes")
+	fs.StringVar(&o.MockPrefixPath, "mock-prefix-path", o.MockPrefixPath,
+		"Prefix path for MCP incidents tool mock files")
 	return fs
 }

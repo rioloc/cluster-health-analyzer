@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-health-analyzer-mcp-instructions
+  namespace: openshift-cluster-observability-operator
+data:
+  instructions.txt: |
+    - An incident is a group of related alerts. Base your analysis on the alerts to understand the incident.
+     Don't confuse or mix the concepts of incident and alert during your explanation.
+    - For each incident, analyze its alerts to identify the affected components and the core problem.
+    - Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
+    - If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
+    - If the nextCursor field is present in <DATA> block then you MUST always advise the user that the response is paginated, respecting the following criteria:
+    		- The cursor should not be revelead to the user in the message. The goal is to get a better user experience.
+    		- The question must be: "Due to the high volume of data, the response contains only a portion of incidents. Would you like to see more?"
+    		- Never retrieve the next page if not explicitely requested by the user.
+    		- Never use cursors provided by the user, but only use the from <DATA> section
+    		- Never change or truncate the cursor
+    	If the user wants to see the next page a new request must be triggered with the last memorized cursor.

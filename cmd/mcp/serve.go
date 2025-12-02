@@ -17,6 +17,7 @@ var (
 var (
 	promURL         string
 	alertManagerURL string
+	mockPrefixPath  string
 )
 
 var (
@@ -47,6 +48,7 @@ var (
 				Url:             ":8085",
 				PrometheusURL:   promURL,
 				AlertManagerURL: alertManagerURL,
+				MockPrefixPath:  mockPrefixPath,
 			}
 
 			server := mcp.NewMCPHealthServer(serverCfg)
@@ -63,4 +65,5 @@ var (
 func init() {
 	MCPCmd.Flags().StringVarP(&promURL, "prom-url", "u", "", "URL of the Prometheus server")
 	MCPCmd.Flags().StringVar(&alertManagerURL, "alertmanager-url", "", "URL of the AlertManager server")
+	MCPCmd.Flags().StringVar(&mockPrefixPath, "mock-prefix-path", "./pkg/mcp", "Prefix path for MCP incidents tool mock files")
 }

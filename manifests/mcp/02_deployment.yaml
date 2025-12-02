@@ -20,10 +20,12 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-mcp-server
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:mcp-dev-preview"
+        image: "quay.io/rh-ee-criolo/cluster-health-analyzer:mcp-pagination-mock"
         imagePullPolicy: Always
         args:
           - mcp
+          - --mock-prefix-path
+          - /var/cha
         env:
           - name: PROM_URL
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
@@ -40,3 +42,11 @@ spec:
         - containerPort: 8085
           name: mcp
         terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: instructions
+          mountPath: /etc/cha-instructions
+          readOnly: true
+      volumes:
+      - name: instructions
+        configMap:
+          name: cluster-health-analyzer-mcp-instructions

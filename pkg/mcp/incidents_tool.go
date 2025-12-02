@@ -25,24 +25,22 @@ import (
 )
 
 var (
-	// Format response with instructions for better LLM interpretation
-	getIncidentsResponseTemplate = `<DATA>
-	%s
-	</DATA>
-	<INSTRUCTIONS>
-	- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident.
-	 Don't confuse or mix the concepts of incident and alert during your explanation.
-	- For each incident, analyze its alerts to identify the affected components and the core problem.
-	- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
-	- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
-	- If the nextCursor field is present in <DATA> block then you MUST always advise the user that the response is paginated, respecting the following criteria:
-			- The cursor should not be revelead to the user in the message. The goal is to get a better user experience.
-			- The question must be: "Due to the high volume of data, the response contains only a portion of incidents. Would you like to see more?"
-			- Never retrieve the next page if not explicitely requested by the user.
-			- Never use cursors provided by the user, but only use the from <DATA> section
-			- Never change or truncate the cursor
-		If the user wants to see the next page a new request must be triggered with the last memorized cursor.
-	</INSTRUCTIONS>`
+	// loadedInstructions stores the instructions loaded from the config map
+	loadedInstructions string
+	
+	// Default instructions used as fallback
+	defaultInstructions = `- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident.
+ Don't confuse or mix the concepts of incident and alert during your explanation.
+- For each incident, analyze its alerts to identify the affected components and the core problem.
+- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
+- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
+- If the nextCursor field is present in <DATA> block then you MUST always advise the user that the response is paginated, respecting the following criteria:
+		- The cursor should not be revelead to the user in the message. The goal is to get a better user experience.
+		- The question must be: "Due to the high volume of data, the response contains only a portion of incidents. Would you like to see more?"
+		- Never retrieve the next page if not explicitely requested by the user.
+		- Never use cursors provided by the user, but only use the from <DATA> section
+		- Never change or truncate the cursor
+	If the user wants to see the next page a new request must be triggered with the last memorized cursor.`
 )
 
 const (
@@ -69,6 +67,7 @@ type incidentToolCfg struct {
 	promURL           string
 	alertManagerURL   string
 	incidentsPageSize int
+	mockPrefixPath    string
 }
 
 type GetIncidentsParams struct {
@@ -95,7 +94,7 @@ var (
 			},
 			"cursor": {
 				Type:        "string",
-				Description: "Cursor used to implement pagination",
+				Description: "Pagination cursor from the nextCursor field of a previous response. Use this to retrieve the next page of incidents when the response indicates more data is available.",
 			},
 		},
 	}
@@ -117,14 +116,41 @@ var (
 	}
 )
 
+// loadInstructionsFromConfigMap loads instructions from k8s config map
+func loadInstructionsFromConfigMap() {
+	instructionsPath := "/etc/cha-instructions/instructions.txt"
+	
+	if data, err := os.ReadFile(instructionsPath); err != nil {
+		slog.Warn("Failed to load instructions from config map, using defaults", "path", instructionsPath, "error", err)
+		loadedInstructions = defaultInstructions
+	} else {
+		loadedInstructions = string(data)
+		slog.Info("Successfully loaded instructions from config map", "path", instructionsPath)
+	}
+}
+
+// getIncidentsResponseTemplate returns the response template with current instructions
+func getIncidentsResponseTemplate() string {
+	return fmt.Sprintf(`<DATA>
+%s
+</DATA>
+<INSTRUCTIONS>
+%s
+</INSTRUCTIONS>`, "%s", loadedInstructions)
+}
+
 // NewIncidentsTool creates a new MCP tool for the incidents
-func NewIncidentsTool(promURL, alertmanagerURL string, pageSize int) IncidentTool {
+func NewIncidentsTool(promURL, alertmanagerURL string, pageSize int, mockPrefixPath string) IncidentTool {
+	// Load instructions from config map at startup
+	loadInstructionsFromConfigMap()
+	
 	return IncidentTool{
 		Tool: defaultMcpGetIncidentsTool,
 		cfg: incidentToolCfg{
 			promURL:           promURL,
 			alertManagerURL:   alertmanagerURL,
 			incidentsPageSize: pageSize,
+			mockPrefixPath:    mockPrefixPath,
 		},
 		getPrometheusLoaderFn:   defaultPrometheusLoader,
 		getAlertManagerLoaderFn: defaultAlertManagerLoader,
@@ -134,20 +160,24 @@ func NewIncidentsTool(promURL, alertmanagerURL string, pageSize int) IncidentToo
 // IncidentsHandler is the main handler for the Incidents. It connects to the
 // in-cluster Prometheus and queries the Incidents metrics.
 func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallToolRequest, params GetIncidentsParams) (*mcp.CallToolResult, any, error) {
+	prefixPath := i.cfg.mockPrefixPath
+	if prefixPath == "" {
+		prefixPath = "./pkg/mcp"
+	}
+	
+	path := fmt.Sprintf("%s/page_1_mock.txt", prefixPath)
+	var response Response
+
 	switch params.Cursor {
-	case "eyJzdGFydCI6MTc2MzM5MjU0MywiZW5kIjoxNzY0Njg4NTQzLCJvZmZzZXQiOjEwfQ==":
+	case "eyJ0aW1lX3N0YXJ0IjoxNzYzNTUyMTQ1LCJ0aW1lX2xhc3QiOjE3NjQ2ODU1NDYsImdyb3VwX2xhc3QiOiJsN204bjlvMC0xajJrLTRsNW0tOG43by0wcDFxMnIzczR0NXUifQ==":
 		fmt.Println("returning second page")
-		return mockResposeFromFile("./pkg/mcp/page_2_mock.txt"), nil, nil
-	case "eyJzdGFydCI6MTc2MzM5MjIxMSwiZW5kIjoxNzY0Njg4MjExLCJvZmZzZXQiOjIwfQ==":
+		path = fmt.Sprintf("%s/page_2_mock.txt", prefixPath)
+	case "eyJ0aW1lX3N0YXJ0IjoxNzYzNTUyMTQ1LCJ0aW1lX2xhc3QiOjE3NjQ1NTYwMzQsImdyb3VwX2xhc3QiOiJjOGQ5ZTBmMS0yYTNiLTVjNmQtOWU4Zi0xZzJoM2k0ajVrNmwifQ==":
 		fmt.Println("returning third and last page")
-		return mockResposeFromFile("./pkg/mcp/page_3_mock.txt"), nil, nil
+		path = fmt.Sprintf("%s/page_3_mock.txt", prefixPath)
 	default:
 		fmt.Println("returning first page")
-		return mockResposeFromFile("./pkg/mcp/page_1_mock.txt"), nil, nil
 	}
-}
-
-func mockResposeFromFile(path string) *mcp.CallToolResult {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		slog.Error("Failed to read mock file", "path", path, "error", err)
@@ -155,15 +185,22 @@ func mockResposeFromFile(path string) *mcp.CallToolResult {
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: fmt.Sprintf("Error reading mock file %s: %v", path, err)},
 			},
-		}
+		}, nil, nil
 	}
-
-	response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+	err = json.Unmarshal(data, &response)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Error unmarshaling mock file content %s: %v", path, err)},
+			},
+		}, nil, nil
+	}
+	responseStr := fmt.Sprintf(getIncidentsResponseTemplate(), string(data))
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: response},
+			&mcp.TextContent{Text: responseStr},
 		},
-	}
+	}, nil, nil
 }
 
 func (i *IncidentTool) initLoaders(token string) (prom.Loader, alertmanager.Loader, error) {
@@ -254,7 +291,7 @@ func buildResponseFromIncidents(queryTimeRange v1.Range, pageSize int, requestCu
 		return "", err
 	}
 
-	return fmt.Sprintf(getIncidentsResponseTemplate, string(data)), nil
+	return fmt.Sprintf(getIncidentsResponseTemplate(), string(data)), nil
 }
 
 // processSampleTime calculates the delta between the two samples and if it's greater

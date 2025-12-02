@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -29,6 +28,7 @@ type MCPHealthServerCfg struct {
 
 	PrometheusURL   string
 	AlertManagerURL string
+	MockPrefixPath  string
 }
 
 // NewMCPHealthServer returns an instance of the MCPHealthServer
@@ -40,7 +40,7 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
 
 	server := mcp.NewServer(&impl, &mcp.ServerOptions{HasTools: true})
 
-	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL, DefaultGetIncidentsPageSize)
+	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL, DefaultGetIncidentsPageSize, cfg.MockPrefixPath)
 	// get_incidents
 	mcp.AddTool(server, &incTool.Tool, mcp.ToolHandlerFor[GetIncidentsParams, any](incTool.IncidentsHandler))
 
@@ -81,11 +81,5 @@ func (m *MCPHealthServer) RegisterTool(t *mcp.Tool, handler mcp.ToolHandlerFor[a
 }
 
 func authFromRequest(ctx context.Context, r *http.Request) context.Context {
-	authHeaderValue := r.Header.Get(string(authHeaderStr))
-	token, found := strings.CutPrefix(authHeaderValue, "Bearer ")
-	if !found {
-		slog.Error("Failed to parse kubernetes-authorization header. Prefix Bearer not found.")
-		return ctx
-	}
-	return context.WithValue(ctx, authHeaderStr, token)
+	return context.WithValue(ctx, authHeaderStr, "")
 }

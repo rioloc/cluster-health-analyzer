@@ -59,7 +59,7 @@ run:
 ## run-mcp> run the mcp server locally (requires prometheus and alertmanager running)
 .PHONY: run-mcp
 run-mcp:
-	go run ./main.go mcp
+	go run ./main.go mcp --mock-prefix-path ./pkg/mcp
 
 ## generate> run go generate
 .PHONY: generate

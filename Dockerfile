@@ -22,7 +22,9 @@ RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 WORKDIR /
+RUN mkdir -p /var/cha
 COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer
+COPY --from=builder /src/pkg/mcp/page_*.txt /var/cha/
 USER 65532:65532
 
 ENTRYPOINT ["/bin/cluster-health-analyzer"]
