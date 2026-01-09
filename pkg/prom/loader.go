@@ -18,6 +18,7 @@ type Loader interface {
 	LoadQuery(ctx context.Context, query string, t time.Time) ([]model.LabelSet, error)
 	LoadAlertsRange(ctx context.Context, start, end time.Time, step time.Duration) (RangeVector, error)
 	LoadVectorRange(ctx context.Context, query string, start, end time.Time, step time.Duration) (RangeVector, error)
+	LoadInstantValue(ctx context.Context, query string, timestamp time.Time) (model.Value, error)
 }
 
 func NewLoader(prometheusURL string) (Loader, error) {
@@ -71,6 +72,14 @@ func (c *loader) LoadVectorRange(ctx context.Context, query string, start, end t
 	}
 
 	return modelValueToRangeVector(result, step), nil
+}
+
+func (c *loader) LoadInstantValue(ctx context.Context, query string, timestamp time.Time) (model.Value, error) {
+	result, _, err := c.api.Query(ctx, query, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	return model.Value(result), nil
 }
 
 func modelValueToRangeVector(mv model.Value, step time.Duration) RangeVector {
