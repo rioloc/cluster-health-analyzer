@@ -5,10 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
 )
@@ -74,6 +74,26 @@ func displayIncidentInformation(ctx context.Context, now time.Time, loader prom.
 		panic(err)
 	}
 
+	res, err := loader.LoadInstantValue(
+		ctx,
+		`min_over_time(timestamp(cluster_health_components_map)[15d:5m])`,
+		now,
+	)
+	if err != nil {
+		panic(err)
+	}
+	minTimestamps := res.(model.Vector)
+
+	res, err = loader.LoadInstantValue(
+		ctx,
+		`last_over_time(timestamp(cluster_health_components_map)[15d:5m])`,
+		now,
+	)
+	if err != nil {
+		panic(err)
+	}
+	lastTimestamps := res.(model.Vector)
+
 	for _, data := range incidents {
 		labels := data.Metric
 		groupId := string(labels["group_id"])
@@ -94,47 +114,37 @@ func displayIncidentInformation(ctx context.Context, now time.Time, loader prom.
 		firstRelative := data.Samples[0].Timestamp
 		lastRelative := data.Samples[total-1].Timestamp
 
-		first, last, err := getFirstAndLastOverTime(loader, now, labels)
-		if err != nil {
-			panic(err)
+		matcher := common.LabelsIntersectionMatcher{
+			Labels: labels,
 		}
 
-		printRow(w, groupId, alertName, namespace, severity, total, firstRelative.Time(), lastRelative.Time(), first, last, step)
+		start := time.Time{}
+		for _, sample := range minTimestamps {
+			match, _ := matcher.Matches(model.LabelSet(sample.Metric))
+			if match {
+				start = time.Unix(int64(sample.Value), 0)
+				break
+			}
+		}
+		if start.IsZero() {
+			panic("start not found")
+		}
+
+		end := time.Time{}
+		for _, sample := range lastTimestamps {
+			match, _ := matcher.Matches(model.LabelSet(sample.Metric))
+			if match {
+				end = time.Unix(int64(sample.Value), 0)
+				break
+			}
+		}
+		if end.IsZero() {
+			panic("end not found")
+		}
+
+		printRow(w, groupId, alertName, namespace, severity, total, firstRelative.Time(), lastRelative.Time(), start, end, step)
 	}
 	w.Flush()
-}
-
-func getFirstAndLastOverTime(loader prom.Loader, timestamp time.Time, labels model.LabelSet) (time.Time, time.Time, error) {
-	labelPairs := []string{}
-	for k, v := range labels {
-		if k != "group_id" && k != "src_alertname" && k != "namespace" && k != "severity" {
-			// skipping
-			continue
-		}
-		labelPairs = append(labelPairs, fmt.Sprintf(`%s="%s"`, k, v))
-	}
-	query := fmt.Sprintf("cluster_health_components_map{%s}", strings.Join(labelPairs, ", "))
-
-	//from := time.Now()
-	minOverTimeQuery := fmt.Sprintf(`min_over_time(timestamp(%s)[15d:5m])`, query)
-	minOverTime, err := loader.LoadInstantValue(context.Background(), minOverTimeQuery, timestamp)
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	//fmt.Printf("min_over_time took %.1f seconds\n", time.Since(from).Seconds())
-
-	//from = time.Now()
-	lastOverTimeQuery := fmt.Sprintf(`last_over_time(timestamp(%s)[15d:5m])`, query)
-	lastOverTime, err := loader.LoadInstantValue(context.Background(), lastOverTimeQuery, timestamp)
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	//fmt.Printf("last_over_time took %.1f seconds\n", time.Since(from).Seconds())
-
-	first := minOverTime.(model.Vector)[0].Value
-	last := lastOverTime.(model.Vector)[0].Value
-
-	return time.Unix(int64(first), 0), time.Unix(int64(last), 0), nil
 }
 
 func printRow(w *tabwriter.Writer, groupId, alertname, namespace, severity string, total int, firstRelative, lastRelative, first, last time.Time, step time.Duration) {
