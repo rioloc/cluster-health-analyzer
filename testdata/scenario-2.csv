@@ -1,0 +1,6 @@
+start,end,alertname,namespace,severity,silenced,labels
+0,2880,AlertWGaps2_Alert0,openshift-network-operator,warning,false,
+1440,20159,AlertWGaps2_Alert1,openshift-network-operator,warning,false,
+8640,11520,AlertWGaps2_Alert0,openshift-network-operator,warning,false,
+12960,20159,AlertWGaps2_Alert0,openshift-network-operator,warning,false,
+0,20160,Watchdog,openshift-network-operator,none,true,

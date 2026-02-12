@@ -1,0 +1,5 @@
+start,end,alertname,namespace,severity,silenced,labels
+8640,14400,AlertWGaps3_Alert0,openshift-ingress-canary,warning,false,
+10080,20160,AlertWGaps3_Alert2,openshift-ingress-canary,critical,false,
+11520,14400,AlertWGaps3_Alert1,openshift-ingress-canary,info,false,
+15840,17280,AlertWGaps3_Alert0,openshift-ingress-canary,warning,false,

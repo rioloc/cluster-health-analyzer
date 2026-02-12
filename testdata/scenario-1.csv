@@ -1,0 +1,6 @@
+start,end,alertname,namespace,severity,silenced,labels
+0,5760,AlertWGaps1_Alert0,openshift-dns,warning,false,
+1440,18720,AlertWGaps1_Alert1,openshift-dns,warning,false,
+10800,12960,AlertWGaps1_Alert0,openshift-dns,warning,false,
+17280,18660,AlertWGaps1_Alert0,openshift-dns,warning,false,
+0,20160,Watchdog,openshift-dns,none,true,

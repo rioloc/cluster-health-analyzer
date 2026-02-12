@@ -1,0 +1,4 @@
+start,end,alertname,namespace,severity,silenced,labels
+0,4320,SimpleScenario_Alert0,openshift-monitoring,warning,false,
+1440,18720,SimpleScenario_Alert1,openshift-monitoring,warning,false,
+2880,20160,SimpleScenario_Alert2,openshift-monitoring,warning,false,

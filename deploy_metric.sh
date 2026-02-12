@@ -1,0 +1,13 @@
+#!/bin/bash
+
+echo "Removing previous openmetrics file"
+rm cluster-health-analyzer-openmetrics.txt
+
+echo "Cleaning data dir"
+rm -rf data
+
+echo "Deploying ${1}"
+
+SCENARIO=${1} make simulate && \
+  promtool tsdb create-blocks-from openmetrics cluster-health-analyzer-openmetrics.txt && \
+  for d in data/*; do echo $d && oc cp $d openshift-monitoring/prometheus-k8s-0:/prometheus -c prometheus; done;
