@@ -214,3 +214,53 @@ func (l LabelsIntersectionMatcher) Equals(other LabelsMatcher) bool {
 
 	return maps.Equal(l.Labels, o.Labels)
 }
+
+// LabelsNOfMatcher matches if at least Min of the specified keys have equal values
+// between the matcher's labels and the target labels.
+type LabelsNOfMatcher struct {
+	Labels model.LabelSet
+	Keys   []model.LabelName
+	Min    int
+}
+
+func (l LabelsNOfMatcher) Matches(labels model.LabelSet) (bool, []model.LabelName) {
+	var matched []model.LabelName
+	for _, k := range l.Keys {
+		v, ok := l.Labels[k]
+		if !ok {
+			continue
+		}
+		if tv, tok := labels[k]; tok && tv == v {
+			matched = append(matched, k)
+		}
+	}
+	if len(matched) >= l.Min {
+		return true, matched
+	}
+	return false, nil
+}
+
+func (l LabelsNOfMatcher) Equals(other LabelsMatcher) bool {
+	o, ok := other.(LabelsNOfMatcher)
+	if !ok {
+		return false
+	}
+	if l.Min != o.Min {
+		return false
+	}
+	if len(l.Keys) != len(o.Keys) {
+		return false
+	}
+	lKeys := make([]string, len(l.Keys))
+	for i, k := range l.Keys {
+		lKeys[i] = string(k)
+	}
+	oKeys := make([]string, len(o.Keys))
+	for i, k := range o.Keys {
+		oKeys[i] = string(k)
+	}
+	if !equalsNoOrder(lKeys, oKeys) {
+		return false
+	}
+	return maps.Equal(l.Labels, o.Labels)
+}

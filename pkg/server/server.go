@@ -97,12 +97,27 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 	}
 
 	if !options.DisableIncidents {
+		var rulesWatcher *processor.RulesWatcher
+		restConfig, err := common.GetKubeConfig(options.Kubeconfig)
+		if err != nil {
+			slog.Warn("Failed to get kubeconfig for rules watcher, using default rules", "err", err)
+		} else {
+			rw, err := processor.NewRulesWatcher(restConfig)
+			if err != nil {
+				slog.Warn("Failed to create rules watcher, using default rules", "err", err)
+			} else {
+				rulesWatcher = rw
+				go rulesWatcher.Start(ctx)
+			}
+		}
+
 		processorCfg := processor.ProcessorConfig{
 			Interval:        interval,
 			PromURL:         options.PromURL,
 			AlertManagerURL: options.AlertManagerURL,
+			RulesWatcher:    rulesWatcher,
 		}
-		processor, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics, groupSeverityCountMetrics)
+		proc, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics, groupSeverityCountMetrics)
 		if err != nil {
 			slog.Error("Failed to create processor, terminating", "err", err)
 			return
@@ -111,13 +126,13 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 		end := time.Now()
 		start := end.Add(-1 * historyLookback)
 		step := time.Minute
-		err = processor.InitGroupsCollection(ctx, start, end, step)
+		err = proc.InitGroupsCollection(ctx, start, end, step)
 		if err != nil {
 			slog.Error("Failed to initialize groups collection, terminating", "err", err)
 			return
 		}
 
-		processor.Start(ctx)
+		proc.Start(ctx)
 	} else {
 		slog.Info("Incident detection is disabled")
 	}

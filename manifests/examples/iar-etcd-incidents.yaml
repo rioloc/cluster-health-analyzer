@@ -1,0 +1,12 @@
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentAggregationRule
+metadata:
+  name: etcd-incidents
+spec:
+  priority: 5
+  within: "2h"
+  scope:
+    namespace:
+      in: [openshift-etcd, openshift-etcd-operator]
+  match:
+    allOf: [namespace]

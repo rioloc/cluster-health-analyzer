@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fake-etcd-alerts
+  namespace: openshift-monitoring
+spec:
+  groups:
+    - name: fake-etcd-incidents
+      rules:
+        - alert: FakeEtcdHighLatency
+          expr: vector(1)
+          labels:
+            severity: warning
+            namespace: openshift-etcd
+            job: etcd
+            service: etcd
+        - alert: FakeEtcdLeaderFlapping
+          expr: vector(1)
+          labels:
+            severity: warning
+            namespace: openshift-etcd
+            job: etcd
+            service: etcd

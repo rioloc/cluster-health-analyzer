@@ -126,6 +126,9 @@ func Simulate(ctx context.Context, outputFile, scenarioFile string, alertsOnly b
 	for _, gi := range groupedIntervalsSet {
 		alert := gi.Metric
 		alert["group_id"] = model.LabelValue(gi.GroupMatcher.RootGroupID)
+		if gi.GroupMatcher.Rule != nil {
+			alert["group_rule"] = model.LabelValue(gi.GroupMatcher.Rule.Name)
+		}
 
 		healthMap := processor.MapAlerts([]model.LabelSet{alert})[0]
 		if err := fmtInterval(ctx, w, "cluster_health_components_map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health)); err != nil {

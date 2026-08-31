@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"math"
 	"slices"
 	"testing"
 	"time"
@@ -9,6 +8,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 )
 
@@ -29,35 +29,36 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 
 	assert.NotEmpty(t, case1[0]["group_id"])
 
-	// Case 2: Alert is within the time range of time-based matcher.
+	// Case 2: Alert with different labels arrives within time range.
 	//
-	// It should match the group of previous alert.
+	// Rule-based matching takes priority over time proximity. Since Alert2 has
+	// different alertname and namespace than Alert1, no rule matches — they
+	// should be in separate groups.
 	alerts = []model.LabelSet{{"alertname": "Alert2", "namespace": "ns2"}}
 	case2 := gc.ProcessAlertsBatch(alerts, start.Add(1*time.Hour+15*time.Minute).Time())
 
-	assert.Equal(t, case1[0]["group_id"], case2[0]["group_id"])
+	assert.NotEqual(t, case1[0]["group_id"], case2[0]["group_id"])
 
-	// Case 3: 2 alerts outside of the time range of time-based matcher,
+	// Case 3: 2 alerts with different labels in the same batch.
 	//
-	// They should not match the original group, but they should both become part
-	// of a new group.
+	// Rule-based matching groups alerts by shared labels, not by co-occurrence.
+	// Since Alert3.1 and Alert3.2 share no labels, they should be in separate groups.
 	alerts = []model.LabelSet{
 		{"alertname": "Alert3.1"},
 		{"alertname": "Alert3.2"},
 	}
 	case3 := gc.ProcessAlertsBatch(alerts, start.Add(3*time.Hour).Time())
-	assert.NotEqual(t, "time-matcher", case3[0]["group_id"])
-	assert.Equal(t, case3[0]["group_id"], case3[1]["group_id"])
+	assert.NotEqual(t, case3[0]["group_id"], case3[1]["group_id"])
 
-	// Case 4: Alert with same alertname as one from case 2 fires within
-	// [processor.fuzzyMatchTimeDelta] time range.
+	// Case 4: Alert with same alertname as one from case 3 fires within
+	// fuzzy-match time range.
 	//
-	// It should match the group created in case 3.
+	// It should match the group created in case 3 via the alertname fuzzy-matcher.
 	alerts = []model.LabelSet{{"alertname": "Alert3.1"}}
 	case4 := gc.ProcessAlertsBatch(alerts, start.Add(7*time.Hour).Time())
 	assert.Equal(t, case3[0]["group_id"], case4[0]["group_id"])
 
-	// Case 5: Alert from the same namespace firing within [processor.fuzzyMatchTimeDelta]
+	// Case 5: Alert from the same namespace firing within fuzzy-match time range.
 	//
 	// It should match with the last active group from the same namespace.
 	alerts = []model.LabelSet{
@@ -95,39 +96,37 @@ func TestGroupsCollectionPruneGroups(t *testing.T) {
 
 	gc := GroupsCollection{}
 
-	// Time-based matcher should be pruned after [processor.fuzzyMatchTimeDelta]
+	ruleTimeOnly := &ParsedRule{Name: "time-proximity", Priority: 100, Within: 15 * time.Minute}
+	ruleFuzzy := &ParsedRule{Name: "fuzzy-match", Priority: 100, Within: 24 * time.Hour}
+	ruleExact := &ParsedRule{Name: "exact-match", Priority: 100, Within: 120 * time.Hour}
+
 	gc.AddGroup(&GroupMatcher{
 		GroupID:  "time-matcher",
 		Start:    start.Add(1 * time.Hour),
 		Modified: start.Add(1 * time.Hour),
 		End:      start.Add(3 * time.Hour),
-		Distance: math.Inf(1)})
+		Rule:     ruleTimeOnly})
 
-	// Fuzzy matcher should be pruned after [processor.fuzzyMatchTimeDelta]
 	gc.AddGroup(&GroupMatcher{
 		GroupID:  "fuzzy-matcher-old",
 		Start:    start.Add(1 * time.Hour),
 		Modified: start.Add(1 * time.Hour),
 		End:      start.Add(3 * time.Hour),
-		Distance: 1})
+		Rule:     ruleFuzzy})
 
-	// This fuzzy-matcher can be still relevant, as it was modified recently.
-	// It should not be pruned.
 	gc.AddGroup(&GroupMatcher{
 		GroupID:  "fuzzy-matcher-recent",
 		Start:    start.Add(1 * time.Hour),
 		Modified: start.Add(24 * time.Hour),
 		End:      start.Add(3 * time.Hour),
-		Distance: 1})
+		Rule:     ruleFuzzy})
 
-	// Direct matcher should be pruned after [processor.directMatchTimeDelta]
-	// It can be active for longer time and should not be pruned first.
 	gc.AddGroup(&GroupMatcher{
 		GroupID:  "direct-matcher",
 		Start:    start.Add(1 * time.Hour),
 		Modified: start.Add(1 * time.Hour),
 		End:      start.Add(3 * time.Hour),
-		Distance: 0})
+		Rule:     ruleExact})
 
 	gc.PruneGroups(start.Add(26 * time.Hour).Time())
 
@@ -221,8 +220,12 @@ func TestGroupsCollectionProcessHistoricalAlerts(t *testing.T) {
 			// most of the time, there is only one label matcher, it's
 			// possible to have multiple label matchers in a single group
 			// though the act of fuzzy-matching.
-			for _, labelMatcher := range groupMatcher.Matchers {
-				alert := string(labelMatcher.Labels["alertname"])
+			for _, lm := range groupMatcher.Matchers {
+				sm, ok := lm.(common.LabelsSubsetMatcher)
+				if !ok {
+					continue
+				}
+				alert := string(sm.Labels["alertname"])
 				if alert != "" && !slices.Contains(alerts, alert) {
 					alerts = append(alerts, alert)
 				}
@@ -284,8 +287,12 @@ func TestGroupsCollectionUpdateGroupUUIDs(t *testing.T) {
 	// Map from group_id to list of alert names.
 	groupedAlerts := make(map[string][]string)
 	for _, g := range gc.Groups {
-		for _, labelMatcher := range g.Matchers {
-			alert := string(labelMatcher.Labels["alertname"])
+		for _, lm := range g.Matchers {
+			sm, ok := lm.(common.LabelsSubsetMatcher)
+			if !ok {
+				continue
+			}
+			alert := string(sm.Labels["alertname"])
 			if alert != "" && !slices.Contains(groupedAlerts[g.RootGroupID], alert) {
 				groupedAlerts[g.RootGroupID] = append(groupedAlerts[g.RootGroupID], alert)
 			}

@@ -3,7 +3,6 @@ package processor
 import (
 	"fmt"
 	"log/slog"
-	"math"
 	"slices"
 	"sort"
 	"time"
@@ -49,11 +48,6 @@ func (c Change) String() string {
 }
 
 type ChangeSet []Change
-
-var noMatchAlerts = []common.LabelsSubsetMatcher{
-	{Labels: model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}},
-	{Labels: model.LabelSet{"alertname": "AlertmanagerReceiversNotConfigured", "namespace": "openshift-monitoring"}},
-}
 
 func MetricsIntervals(rangeVector prom.RangeVector) []Interval {
 	if len(rangeVector) == 0 {
@@ -143,21 +137,24 @@ type GroupMatcher struct {
 	Modified    model.Time
 	End         model.Time
 
-	Distance float64
-	Matchers []common.LabelsSubsetMatcher
+	Rule     *ParsedRule
+	Matchers []common.LabelsMatcher
 }
 
 func (g GroupMatcher) String() string {
-	return fmt.Sprintf("GroupID: %s, RootGroupID: %s, Start: %s, Modified: %s, End: %s, Distance: %f, Matchers: %v",
-		g.GroupID, g.RootGroupID, g.Start.Time(), g.Modified.Time(), g.End.Time(), g.Distance, g.Matchers)
+	ruleName := "<nil>"
+	if g.Rule != nil {
+		ruleName = g.Rule.Name
+	}
+	return fmt.Sprintf("GroupID: %s, RootGroupID: %s, Start: %s, Modified: %s, End: %s, Rule: %s, Matchers: %v",
+		g.GroupID, g.RootGroupID, g.Start.Time(), g.Modified.Time(), g.End.Time(), ruleName, g.Matchers)
 }
 
 func (g GroupMatcher) isSubsetOf(other *GroupMatcher) bool {
-	if g.Distance != other.Distance {
+	if g.Rule != other.Rule {
 		return false
 	}
 
-	// Check if all matchers of g are in other.
 	for _, m := range g.Matchers {
 		contains := false
 		for _, om := range other.Matchers {
@@ -173,19 +170,15 @@ func (g GroupMatcher) isSubsetOf(other *GroupMatcher) bool {
 	return true
 }
 
-func (g *GroupMatcher) expandMatchers(matchers []common.LabelsSubsetMatcher) {
+func (g *GroupMatcher) expandMatchers(matchers []common.LabelsMatcher) {
 	for _, m := range matchers {
-		// Check if the matcher is already in the group.
-		// If not, add it.
 		found := false
-
 		for _, gm := range g.Matchers {
 			if gm.Equals(m) {
 				found = true
 				break
 			}
 		}
-
 		if !found {
 			g.Matchers = append(g.Matchers, m)
 		}
@@ -197,65 +190,27 @@ type match struct {
 	TimeDist     time.Duration
 }
 
-func newGroupMatcherSubset(labels model.LabelSet, keys []model.LabelName, distance float64) *GroupMatcher {
-	labels = getMapSubset(labels, keys...)
-
-	return &GroupMatcher{
-		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
-		Distance: distance,
-	}
-}
-
-func newGroupMatcherExact(labels model.LabelSet) *GroupMatcher {
-	return &GroupMatcher{
-		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
-		Distance: 0,
-	}
-}
-
-func watchdogAlert(i Interval) bool {
-	return i.Metric["alertname"] == "Watchdog" &&
-		i.Metric["namespace"] == "openshift-monitoring"
-}
-
-func alertFuzzyLabels(i Interval) model.LabelSet {
-	for _, m := range noMatchAlerts {
-		// For certain alerts, we don't want to do any fuzzy matching.
-		if match, _ := m.Matches(i.Metric); match {
-			return nil
-		}
-	}
-	// TODO: add option for some alerts to match some known pairs, but not others.
-	// E.g. APIRemovedInNextReleaseInUse and APIRemovedInNextEUSReleaseInUse
-	return getMapSubset(i.Metric, "alertname", "namespace")
-}
-
-// alertGroupMatchers returns a list of matchers for the alert.
-// This includes exact matcher with 0 distance, as well as various fuzzy matchers
-// based on the alert labels.
-func alertGroupMatchers(interval Interval) []*GroupMatcher {
-	labels := interval.Metric
-	groups := []*GroupMatcher{
-		newGroupMatcherExact(labels),
-		// Match on main subset of labels - should be still close enough.
-		newGroupMatcherSubset(labels, []model.LabelName{"namespace", "alertname", "service", "job", "container"}, 1),
-	}
-
-	for k, v := range alertFuzzyLabels(interval) {
-		groups = append(groups,
-			newGroupMatcherSubset(model.LabelSet{k: v}, []model.LabelName{k}, 2),
-		)
-	}
-	for _, g := range groups {
-		g.Start = interval.Start
-		g.Modified = interval.Start
-		g.End = interval.End
-	}
-	return groups
+// timeProximityRule is an internal sentinel rule for root groups created by batch grouping.
+var timeProximityRule = &ParsedRule{
+	Name:     "time-proximity",
+	Priority: 100,
+	Within:   15 * time.Minute,
 }
 
 type GroupsCollection struct {
-	Groups []*GroupMatcher
+	Groups      []*GroupMatcher
+	rulesSource func() *ParsedRulesSnapshot
+}
+
+func NewGroupsCollection(rulesSource func() *ParsedRulesSnapshot) *GroupsCollection {
+	return &GroupsCollection{rulesSource: rulesSource}
+}
+
+func (gc *GroupsCollection) snapshot() *ParsedRulesSnapshot {
+	if gc.rulesSource != nil {
+		return gc.rulesSource()
+	}
+	return DefaultSnapshot()
 }
 
 func (gc *GroupsCollection) AddGroup(g *GroupMatcher) {
@@ -263,12 +218,12 @@ func (gc *GroupsCollection) AddGroup(g *GroupMatcher) {
 }
 
 func (gc *GroupsCollection) ProcessIntervalsBatch(intervals []Interval) []GroupedInterval {
-	slog.Info("Processing", "intervals", len(intervals), "groups", len(gc.Groups))
-	groupedIntervals, unmatched := gc.tryMatchIntervals(intervals)
+	snap := gc.snapshot()
+	slog.Info("Processing", "intervals", len(intervals), "groups", len(gc.Groups), "rules", len(snap.Rules))
+	groupedIntervals, unmatched := gc.tryMatchIntervals(intervals, snap)
 
 	if len(unmatched) > 0 {
-		// Create new groups for the unmatched intervals.
-		newGroupedIntervals := gc.addIntervalsGroups(unmatched, nil)
+		newGroupedIntervals := gc.addIntervalsGroups(unmatched, nil, snap)
 		groupedIntervals = append(groupedIntervals, newGroupedIntervals...)
 	}
 
@@ -302,6 +257,9 @@ func (gc *GroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, timestam
 		alert := gi.Metric
 		if gi.GroupMatcher != nil {
 			alert["group_id"] = model.LabelValue(gi.GroupMatcher.RootGroupID)
+			if gi.GroupMatcher.Rule != nil {
+				alert["group_rule"] = model.LabelValue(gi.GroupMatcher.Rule.Name)
+			}
 		}
 		ret = append(ret, alert)
 	}
@@ -309,22 +267,15 @@ func (gc *GroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, timestam
 }
 
 // PruneGroups removes groups that can't be matched anymore.
-//
-// It calculates the threshold based on the provided time and removes groups.
 func (gc *GroupsCollection) PruneGroups(t time.Time) {
-	// Directs matches have longer retention times.
-	gc.pruneGroupsBefore(0, 0, t.Add(-1*directMatchLongTimeDelta))
-	// Fuzzy matches have shorter retention times.
-	gc.pruneGroupsBefore(1, math.Inf(1), t.Add(-1*fuzzyMatchTimeDelta))
-}
-
-func (gc *GroupsCollection) pruneGroupsBefore(minDistance, maxDistance float64, t time.Time) {
-	mt := model.TimeFromUnixNano(t.UnixNano())
-
 	newGroups := make([]*GroupMatcher, 0, len(gc.Groups))
-
 	for _, g := range gc.Groups {
-		if g.Distance >= minDistance && g.Distance <= maxDistance && g.Modified.Before(mt) {
+		within := 24 * time.Hour
+		if g.Rule != nil {
+			within = g.Rule.Within
+		}
+		threshold := model.TimeFromUnixNano(t.Add(-within).UnixNano())
+		if g.Modified.Before(threshold) {
 			continue
 		}
 		newGroups = append(newGroups, g)
@@ -332,7 +283,7 @@ func (gc *GroupsCollection) pruneGroupsBefore(minDistance, maxDistance float64, 
 	gc.Groups = newGroups
 }
 
-func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval) ([]GroupedInterval, []Interval) {
+func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval, snap *ParsedRulesSnapshot) ([]GroupedInterval, []Interval) {
 	var ret []GroupedInterval
 	var unmatched []Interval
 	for _, i := range intervals {
@@ -342,13 +293,12 @@ func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval) ([]GroupedIn
 			continue
 		}
 
-		if matchedGroup.Distance > 0 {
-			// We don't update modified time for flapping alerts,
+		if matchedGroup.Rule == nil || matchedGroup.Rule.Priority > 0 {
 			matchedGroup.Modified = i.Start
 		}
 		matchedGroup.End = max(matchedGroup.End, i.End)
 
-		newGroupedIntervals := gc.addIntervalsGroups([]Interval{i}, matchedGroup)
+		newGroupedIntervals := gc.addIntervalsGroups([]Interval{i}, matchedGroup, snap)
 		ret = append(ret, newGroupedIntervals...)
 	}
 	return ret, unmatched
@@ -363,11 +313,9 @@ func (gc *GroupsCollection) newRootGroup(i Interval, inactive bool) *GroupMatche
 		Start:       i.Start,
 		Modified:    i.Start,
 		End:         i.End,
-		Distance:    math.Inf(1),
+		Rule:        timeProximityRule,
 	}
 	if inactive {
-		// For inactive group, we set the modified to 0 so that it doesn't match
-		// any new alert.
 		ret.Modified = 0
 	}
 
@@ -375,53 +323,41 @@ func (gc *GroupsCollection) newRootGroup(i Interval, inactive bool) *GroupMatche
 	return &ret
 }
 
-func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatcher *GroupMatcher) []GroupedInterval {
+func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatcher *GroupMatcher, snap *ParsedRulesSnapshot) []GroupedInterval {
 	if len(intervals) == 0 {
 		return nil
 	}
 	newGc := &GroupsCollection{}
 
-	isWatchdogGroup := false
-	for _, i := range intervals {
-		if watchdogAlert(i) {
-			isWatchdogGroup = true
-			break
-		}
-	}
-
 	ret := make([]GroupedInterval, 0, len(intervals))
-	if groupMatcher == nil && !isWatchdogGroup {
-		// If not provided, create a new root group for all intervals in this batch.
-		// We don't do this if watchdog is present in the group, as it indicates
-		// the alerts are together by accident (perhaps due to a restart or data
-		// outage).
-		groupMatcher = newGc.newRootGroup(intervals[0], isWatchdogGroup)
-	}
 
+	// Phase 1: Rule-based grouping takes priority.
+	// Each interval tries to match by rules first. Only intervals with no
+	// rule matchers fall through to batch grouping.
+	var batchLeftovers []Interval
 	for _, i := range intervals {
-		var iGroupMatcher *GroupMatcher
-		iGroupMatcher = groupMatcher
+		iGroupMatcher := groupMatcher
 
 		if iGroupMatcher == nil {
 			iGroupMatcher = newGc.bestMatch(i)
 		}
 
+		newGroupCands := alertGroupMatchersFromRules(i, snap.Rules)
+
 		if iGroupMatcher == nil {
-			iGroupMatcher = newGc.newRootGroup(i, isWatchdogGroup)
+			if len(newGroupCands) > 0 {
+				iGroupMatcher = newGc.newRootGroup(i, true)
+			} else {
+				batchLeftovers = append(batchLeftovers, i)
+				continue
+			}
 		}
 
-		// If we didn't have a direct match, add additional fuzzy matchers
-		// for this interval. If Distance is 0, we assume the fuzzy matchers
-		// to be already present.
-		if iGroupMatcher.Distance > 0 {
-			newGroupCands := alertGroupMatchers(i)
+		if iGroupMatcher.Rule == nil || iGroupMatcher.Rule.Priority > 0 {
 			for _, g := range newGroupCands {
-				if g.Distance == iGroupMatcher.Distance && iGroupMatcher.isSubsetOf(g) {
+				if g.Rule == iGroupMatcher.Rule && iGroupMatcher.isSubsetOf(g) {
 					iGroupMatcher.expandMatchers(g.Matchers)
-					if g.Distance > 0 {
-						// We don't update modified time for flapping alerts,
-						// as we don't consider that being a significant change
-						// for the group.
+					if iGroupMatcher.Rule == nil || iGroupMatcher.Rule.Priority > 0 {
 						iGroupMatcher.Modified = i.Start
 					}
 					iGroupMatcher.End = max(iGroupMatcher.End, i.End)
@@ -434,103 +370,89 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 
 		ret = append(ret, GroupedInterval{i, iGroupMatcher})
 	}
+
+	// Phase 2: Batch grouping for intervals with no rule-based matchers.
+	if len(batchLeftovers) > 0 {
+		batchRoot := newGc.newRootGroup(batchLeftovers[0], false)
+		for _, i := range batchLeftovers {
+			ret = append(ret, GroupedInterval{i, batchRoot})
+		}
+	}
+
 	for _, g := range newGc.Groups {
 		gc.AddGroup(g)
 	}
 	return ret
 }
 
-var (
-	// Unless we have a direct match, we try fuzzy matching.
-	fuzzyMatchTimeDelta = 24 * time.Hour
-
-	// If we have no match yet, we try to match on the time, but just very close events.
-	timeMatchTimeDelta = 15 * time.Minute
-
-	// No match yet: look for direct matches deeper in the past.
-	directMatchLongTimeDelta = 5 * 24 * time.Hour
-)
-
 func (gc *GroupsCollection) bestMatch(interval Interval) *GroupMatcher {
-	matches := gc.matches(interval)
-	var directLongMatch *match
-	var shortCandidates []match
-	var shortMatch *match
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].TimeDist < matches[j].TimeDist
+	candidates := gc.matches(interval)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].TimeDist < candidates[j].TimeDist
 	})
 
-	for _, m := range matches {
-		if m.TimeDist <= fuzzyMatchTimeDelta {
-			shortCandidates = append(shortCandidates, m)
+	var best *match
+	for i := range candidates {
+		m := &candidates[i]
+		if best == nil {
+			best = m
 			continue
 		}
-
-		if m.TimeDist <= directMatchLongTimeDelta && m.GroupMatcher.Distance == 0 {
-			directLongMatch = &m
-			// Given matches are sorted by time and we crossed the fuzzyMatchTimeDelta,
-			// there is no change to match anything better at this point.
-			break
+		mPriority := rulePriority(m.GroupMatcher)
+		bestPriority := rulePriority(best.GroupMatcher)
+		if mPriority < bestPriority {
+			best = m
 		}
 	}
 
-	if len(shortCandidates) > 0 {
-		// Try to find the match with the smallest distance.
-		// In case of the same distance, it's fine for the first match to win,
-		// as we sort the matches by time initially.
-		shortMatch = &shortCandidates[0]
-		for i := 1; i < len(shortCandidates); i++ {
-			if shortCandidates[i].GroupMatcher.Distance < shortMatch.GroupMatcher.Distance {
-				shortMatch = &shortCandidates[i]
-			}
-		}
+	if best != nil {
+		return best.GroupMatcher
 	}
-
-	if shortMatch != nil {
-		return shortMatch.GroupMatcher
-	}
-	if directLongMatch != nil {
-		return directLongMatch.GroupMatcher
-	}
-
 	return nil
+}
+
+func rulePriority(g *GroupMatcher) int {
+	if g.Rule != nil {
+		return g.Rule.Priority
+	}
+	return 1000
 }
 
 func (gc *GroupsCollection) matches(interval Interval) []match {
 	var ret []match
-	allLabels := interval.Metric
-	fuzzyLabels := alertFuzzyLabels(interval)
+	labels := interval.Metric
 	for _, g := range gc.Groups {
-		var timeDist time.Duration
-		if g.Distance == 0 {
-			// for direct matches, we compare with the end of the interval
-			timeDist = interval.Start.Sub(g.End)
-		} else {
-			// In fuzzy matching, we compare with the last time the group was modified.
-			timeDist = interval.Start.Sub(g.Modified)
-		}
-
 		if interval.Start < g.Start {
-			// We don't consider groups from the future
 			continue
 		}
 
-		// Pure time-based grouping
-		if g.Distance == math.Inf(1) && timeDist <= timeMatchTimeDelta {
+		var timeDist time.Duration
+		if g.Rule != nil && g.Rule.Match.Exact {
+			timeDist = interval.Start.Sub(g.End)
+		} else {
+			timeDist = interval.Start.Sub(g.Modified)
+		}
+
+		within := 24 * time.Hour
+		if g.Rule != nil {
+			within = g.Rule.Within
+		}
+		if timeDist > within {
+			continue
+		}
+
+		if len(g.Matchers) == 0 {
 			ret = append(ret, match{g, timeDist})
 			continue
 		}
 
-		labels := allLabels
-		// For fuzzy matching, we use only a subset of labels that can be overriden
-		// on per-alert basis.
-		if g.Distance >= 2 {
-			labels = fuzzyLabels
-		}
 		for _, m := range g.Matchers {
 			if matched, _ := m.Matches(labels); matched {
 				ret = append(ret, match{g, timeDist})
-				// We found a match for this group: no need to check other matchers.
 				break
 			}
 		}
@@ -644,9 +566,11 @@ func (gc *GroupsCollection) UpdateGroupUUIDs(healthMapRV prom.RangeVector) {
 		}
 
 		for _, m := range g.Matchers {
-			// Using End instead of Start, as the previous incidents might not be covering
-			// the whole duration of the group.
-			prevIncident := prevIncidentsMatcher.match(m.Labels, g.End)
+			sm, ok := m.(common.LabelsSubsetMatcher)
+			if !ok {
+				continue
+			}
+			prevIncident := prevIncidentsMatcher.match(sm.Labels, g.End)
 			if prevIncident != nil {
 				newGroupID := prevIncident.uuid
 				oldGroupID := g.RootGroupID

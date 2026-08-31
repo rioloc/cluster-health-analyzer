@@ -1,0 +1,41 @@
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentAggregationRule
+metadata:
+  name: exact-match
+spec:
+  priority: 100
+  within: "120h"
+  match:
+    exact: true
+---
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentAggregationRule
+metadata:
+  name: subset-match
+spec:
+  priority: 100
+  within: "24h"
+  match:
+    allOf: [namespace, alertname, service, job, container]
+---
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentAggregationRule
+metadata:
+  name: fuzzy-match
+spec:
+  priority: 100
+  within: "24h"
+  scope:
+    alertname:
+      notIn: [Watchdog, AlertmanagerReceiversNotConfigured]
+  match:
+    anyOf: [alertname, namespace]
+---
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentAggregationRule
+metadata:
+  name: time-proximity
+spec:
+  priority: 100
+  within: "15m"
+  match: {}

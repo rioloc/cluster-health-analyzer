@@ -20,6 +20,7 @@ type ComponentHealthMap struct {
 	SrcType   SrcType        // Type of the source (alert, cluster_operator_condition)
 	SrcLabels model.LabelSet // Identifying labels of the source
 	GroupId   string         // Group ID of the component
+	GroupRule string         // Name of the IAR rule that grouped this component
 	Health    HealthValue    // Health value of the component
 	Silenced  string         // Whether the alert is silenced or not
 }
@@ -92,11 +93,12 @@ func (c ComponentHealthMap) hashLabelValues() uint64 {
 // Labels to be exported for the mapping.
 func (c ComponentHealthMap) Labels() model.LabelSet {
 	metaLabels := model.LabelSet{
-		"layer":     model.LabelValue(c.Layer),
-		"component": model.LabelValue(c.Component),
-		"type":      model.LabelValue(c.SrcType),
-		"group_id":  model.LabelValue(c.GroupId),
-		"silenced":  model.LabelValue(c.Silenced),
+		"layer":      model.LabelValue(c.Layer),
+		"component":  model.LabelValue(c.Component),
+		"type":       model.LabelValue(c.SrcType),
+		"group_id":   model.LabelValue(c.GroupId),
+		"group_rule": model.LabelValue(c.GroupRule),
+		"silenced":   model.LabelValue(c.Silenced),
 	}
 
 	labels := make(model.LabelSet, len(c.SrcLabels)+len(metaLabels))

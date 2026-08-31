@@ -1,0 +1,152 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: incidentaggregationrules.monitoring.openshift.io
+spec:
+  group: monitoring.openshift.io
+  names:
+    kind: IncidentAggregationRule
+    listKind: IncidentAggregationRuleList
+    plural: incidentaggregationrules
+    singular: incidentaggregationrule
+    shortNames:
+    - iar
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        description: IncidentAggregationRule defines how alerts are grouped into incidents.
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the aggregation rule configuration.
+            type: object
+            required:
+            - priority
+            - within
+            - match
+            properties:
+              priority:
+                description: >-
+                  Priority of this rule. Lower values indicate higher priority.
+                  When multiple rules match, the one with the lowest priority value wins.
+                type: integer
+                format: int32
+              within:
+                description: >-
+                  Time window for grouping alerts into an incident, specified as a
+                  Go duration string (e.g. "15m", "24h", "120h").
+                type: string
+              scope:
+                description: >-
+                  Map of label keys to filter conditions. Only alerts whose labels
+                  satisfy all scope conditions are considered by this rule.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+                additionalProperties:
+                  description: Filter condition for a single label key.
+                  type: object
+                  properties:
+                    equals:
+                      description: Label value must equal this string.
+                      type: string
+                    in:
+                      description: Label value must be one of these strings.
+                      type: array
+                      items:
+                        type: string
+                    notIn:
+                      description: Label value must not be one of these strings.
+                      type: array
+                      items:
+                        type: string
+                    regex:
+                      description: Label value must match this regular expression.
+                      type: string
+                    exists:
+                      description: If true, the label must be present; if false, it must be absent.
+                      type: boolean
+              match:
+                description: >-
+                  Match criteria that determine which label keys are used to group
+                  alerts into incidents.
+                type: object
+                properties:
+                  exact:
+                    description: >-
+                      When true, alerts must share exactly the same set of grouping
+                      label values to be placed in the same incident.
+                    type: boolean
+                  allOf:
+                    description: >-
+                      All of these label keys must have matching values for alerts
+                      to be grouped together.
+                    type: array
+                    items:
+                      type: string
+                  anyOf:
+                    description: >-
+                      At least one of these label keys must have a matching value
+                      for alerts to be grouped together.
+                    type: array
+                    items:
+                      type: string
+                  nOf:
+                    description: >-
+                      At least 'min' of the specified label keys must have matching
+                      values for alerts to be grouped together.
+                    type: object
+                    required:
+                    - keys
+                    - min
+                    properties:
+                      keys:
+                        description: Label keys to consider.
+                        type: array
+                        items:
+                          type: string
+                      min:
+                        description: Minimum number of keys that must match.
+                        type: integer
+                        format: int32
+                  and:
+                    description: >-
+                      A list of match criteria that must all be satisfied. Supports
+                      one level of nesting only.
+                    type: array
+                    items:
+                      description: Nested match criterion (no further nesting allowed).
+                      type: object
+                      properties:
+                        exact:
+                          type: boolean
+                        allOf:
+                          type: array
+                          items:
+                            type: string
+                        anyOf:
+                          type: array
+                          items:
+                            type: string
+                        nOf:
+                          type: object
+                          required:
+                          - keys
+                          - min
+                          properties:
+                            keys:
+                              type: array
+                              items:
+                                type: string
+                            min:
+                              type: integer
+                              format: int32

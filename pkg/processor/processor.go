@@ -41,12 +41,14 @@ type processor struct {
 	loader           prom.Loader
 	amLoader         alertmanager.Loader
 	groupsCollection *GroupsCollection
+	rulesWatcher     *RulesWatcher
 }
 
 type ProcessorConfig struct {
 	Interval        time.Duration
 	PromURL         string
 	AlertManagerURL string
+	RulesWatcher    *RulesWatcher
 }
 
 func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet) (*processor, error) {
@@ -69,6 +71,7 @@ func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.
 		interval:                  cfg.Interval,
 		loader:                    promLoader,
 		amLoader:                  amLoader,
+		rulesWatcher:              cfg.RulesWatcher,
 	}, nil
 }
 
@@ -83,7 +86,11 @@ func (p *processor) Start(ctx context.Context) {
 // for assigning group-ids to the alerts.
 func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Time, step time.Duration) error {
 	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
-	p.groupsCollection = &GroupsCollection{}
+	var rulesSource func() *ParsedRulesSnapshot
+	if p.rulesWatcher != nil {
+		rulesSource = p.rulesWatcher.GetSnapshot
+	}
+	p.groupsCollection = NewGroupsCollection(rulesSource)
 
 	slog.Info("Loading alerts range")
 	alertsRange, err := p.loader.LoadAlertsRange(ctx, start, end, step)
