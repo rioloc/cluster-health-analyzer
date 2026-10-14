@@ -1,0 +1,144 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: incidentrules.monitoring.openshift.io
+spec:
+  group: monitoring.openshift.io
+  names:
+    kind: IncidentRule
+    listKind: IncidentRuleList
+    plural: incidentrules
+    singular: incidentrule
+    shortNames: [ir]
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: >-
+            IncidentRule defines matchers, their precedence, and matching windows.
+            Lower rule priorities take precedence; equal priorities are ordered by
+            resource name. Within a rule, earlier strategies take precedence.
+            Retention always uses Modified and lasts at least 120h for exact
+            matchers and 24h for all other matchers, including temporal roots.
+            A larger within extends retention to that duration.
+            Watchdog batch protection remains internal to the processor.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [strategies]
+              properties:
+                priority:
+                  description: >-
+                    Lower values take precedence over higher values. Rules with
+                    equal priorities are ordered by resource name.
+                  type: integer
+                  format: int32
+                  minimum: -2147483648
+                  maximum: 2147483647
+                  default: 0
+                strategies:
+                  description: >-
+                    Matcher definitions in precedence order. The first strategy
+                    with a valid candidate wins; equally ranked candidates are
+                    ordered by temporal distance. Strategies may repeat an operator
+                    with different windows to configure fallback matching.
+                  type: array
+                  minItems: 1
+                  x-kubernetes-list-type: atomic
+                  items:
+                    type: object
+                    required: [match, within, from]
+                    x-kubernetes-validations:
+                      - rule: "duration(self.within) > duration('0s')"
+                        message: within must be a positive duration.
+                      - rule: '!has(self.excludeAlerts) || size(self.excludeAlerts) == 0 || has(self.match.exact) || has(self.match.allOf) || has(self.match.anyOf)'
+                        message: Temporal strategies cannot filter individual alerts.
+                    properties:
+                      within:
+                        description: >-
+                          Inclusive maximum time distance between the incoming
+                          interval start and the reference selected by from.
+                          Use a positive duration in hours, minutes, or seconds,
+                          for example 120h, 15m, 1h30m, or 0.5s. Retention is
+                          max(120h, within) for exact and max(24h, within) otherwise,
+                          always measured from Modified rather than from the
+                          matching reference selected by from.
+                        type: string
+                        minLength: 2
+                        maxLength: 32
+                        pattern: '^([0-9]+(\.[0-9]+)?(h|m|s))+$'
+                      from:
+                        description: >-
+                          Selects both the matching reference and timestamp update
+                          behavior. end uses the latest observed firing timestamp
+                          (End), not confirmed resolution; matches advance End but
+                          leave Modified unchanged. start uses Modified, renewed
+                          with the start of each matched interval, not the original
+                          matcher Start; matches also advance End. In live polling,
+                          interval start and end both equal the observation time.
+                          In historical data, they delimit a continuous firing episode.
+                          Retention always uses Modified, regardless of this value.
+                        type: string
+                        enum: [end, start]
+                      excludeAlerts:
+                        description: >-
+                          Exclude alerts matching any selector from both matcher
+                          generation and matching. All labels in a selector must
+                          match on the same alert.
+                        type: array
+                        items:
+                          type: object
+                          minProperties: 1
+                          additionalProperties:
+                            type: string
+                      match:
+                        description: >-
+                          Specify at most one operator. An empty object enables
+                          temporal matching of incident roots; batch creation
+                          continues to follow the existing algorithm.
+                        type: object
+                        maxProperties: 1
+                        # Reject unknown operators instead of pruning them into match: {}.
+                        x-kubernetes-preserve-unknown-fields: true
+                        oneOf:
+                          - required: [exact]
+                          - required: [allOf]
+                          - required: [anyOf]
+                          - maxProperties: 0
+                        properties:
+                          exact:
+                            description: >-
+                              Capture all labels. Matching retains the legacy subset
+                              semantics: additional target labels are permitted.
+                            type: boolean
+                            enum: [true]
+                          allOf:
+                            description: >-
+                              Capture the configured keys present in the source
+                              alert and require their values to match. Missing source
+                              keys are omitted, as in the existing algorithm.
+                            type: array
+                            minItems: 1
+                            x-kubernetes-list-type: set
+                            items:
+                              type: string
+                              minLength: 1
+                          anyOf:
+                            description: Generate one matcher per configured key present in the source alert.
+                            type: array
+                            minItems: 1
+                            x-kubernetes-list-type: set
+                            items:
+                              type: string
+                              minLength: 1

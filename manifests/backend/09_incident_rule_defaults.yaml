@@ -1,0 +1,31 @@
+apiVersion: monitoring.openshift.io/v1alpha1
+kind: IncidentRule
+metadata:
+  name: default
+spec:
+  priority: 0
+  strategies:
+    - match:
+        exact: true
+      within: 24h
+      from: end
+    - match:
+        allOf: [namespace, alertname, service, job, container]
+      within: 24h
+      from: start
+    - excludeAlerts:
+        - alertname: Watchdog
+          namespace: openshift-monitoring
+        - alertname: AlertmanagerReceiversNotConfigured
+          namespace: openshift-monitoring
+      match:
+        anyOf: [alertname, namespace]
+      within: 24h
+      from: start
+    - match: {}
+      within: 15m
+      from: start
+    - match:
+        exact: true
+      within: 120h
+      from: end

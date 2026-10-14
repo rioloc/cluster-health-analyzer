@@ -405,6 +405,11 @@ func fmtInterval(
 }
 
 func simulate(outputFile, scenarioFile string) {
+	rules, err := processor.LoadRulesFile("manifests/backend/09_incident_rule_defaults.yaml")
+	must(err)
+	gc, err := processor.NewGroupsCollection(rules)
+	must(err)
+
 	// Build sample intervals.
 	intervals, err := buildAlertIntervals(scenarioFile)
 	must(err)
@@ -468,7 +473,6 @@ func simulate(outputFile, scenarioFile string) {
 		must(err)
 	}
 
-	gc := &processor.GroupsCollection{}
 	var groupedIntervalsSet []processor.GroupedInterval
 
 	for _, change := range changes {

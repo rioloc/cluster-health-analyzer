@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-health-analyzer-incident-rules
+rules:
+  - apiGroups: [monitoring.openshift.io]
+    resources: [incidentrules]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-health-analyzer-incident-rules
+subjects:
+  - kind: ServiceAccount
+    name: cluster-health-analyzer-thanos-querier
+    namespace: openshift-cluster-health-analyzer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-health-analyzer-incident-rules
